@@ -1,0 +1,34 @@
+# whendoilust — WoW combat log rotation analyzer
+
+Personal tool for improving the user's Arcane Mage rotation from WoW advanced combat logs (Hekili stopped working when 12.x broke addon APIs).
+
+## Who / what
+- Character: **Whendoilust-Sargeras-US**, Arcane Mage, **Sunfury** hero tree, Season 2 4-piece (Cumulative Power), Heroic raid.
+- Comparison player: **Zaffira-Mannoroth-US**, another Arcane Sunfury mage in the same raid (`--compare Zaffira`).
+- The user cares about **rotation/priority execution, not death analysis** — deaths are obvious to them.
+
+## Running
+```
+python3 wowlog.py --list                       # numbered pulls in the newest log
+python3 wowlog.py --last --compare Zaffira     # most recent pull
+python3 wowlog.py --pull 13                    # a specific pull
+python3 wowlog.py --boss Sentinels             # all pulls of a boss
+```
+Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest is used by default; pass a path to override). Safe to run while the game is still logging. "Check last pull" from the user means run `--last --compare Zaffira` and summarize the rotation findings.
+
+## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources
+- Sources: SimC APL `ActionPriorityLists/default/mage_arcane.simc` on the `midnight` branch (generated 2026-09-06); Method.gg Arcane 12.1 guide (updated 2026-09-13). Icy Veins blocks fetches; Wowhead guide bodies don't render via fetch, but spell pages do.
+- Clearcasting max 3 stacks; gaining at cap logs SPELL_AURA_REFRESH (= wasted proc).
+- Arcane Salvo max 25, +3% Barrage damage per stack; Missiles builds it, Barrage consumes it. Gains at 25 are silent (no event).
+- Arcane Soul (Sunfury, after the phoenix): ~4s; each Barrage during it gives +5 Salvo and +1 Clearcasting and does not consume Salvo. Barrage spam; CC capping inside Soul is expected.
+- Cumulative Power (4pc): builds to 8 during a Missiles channel, expires ~2.5s after; consumed by Prismatic Bolt. "Prismatic Bolt!" aura = Bolt available.
+- Arcane Charges come from SPELL_ENERGIZE power type 16 (amount, overEnergize); the tool's charge count is approximate (Barrage resets to 0).
+- SimC Sunfury priority: Missiles if CC & Salvo<12 → Bolt at 8 CP (no Soul) → Barrage if (4 charges & (CC & Salvo≥12 | Salvo=25)) | Soul | (Salvo>8 & Touch ready) → Bolt → Orb (charges<3) → Blast. Surge (90s) with Touch of the Magi (45s); never hold Touch.
+- Procs (CC, Bolt!, Soul) gained <0.4s before a cast are treated as not yet available (reaction allowance).
+
+## Log format notes
+- Line = `M/D/YYYY HH:MM:SS.mmm-TZ  EVENT,fields...` (two spaces). COMBATANT_INFO is skipped. Player is found via unit flags `0x511` (mine).
+- Advanced params follow the spell prefix on CAST_SUCCESS; aura DOSE events end with the new stack count.
+
+## Progress log
+See memory for the user's coaching history; in-repo history is in git.
