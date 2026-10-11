@@ -338,19 +338,20 @@ SUPPORTED_BUILD = "Arcane Sunfury with the Season 2 4-piece"
 ARCANE = 62
 SUNFURY_AURAS = {"Spellfire Sphere", "Arcane Soul"}  # buffs only Sunfury gains
 SET_4PC_AURA = "Cumulative Power"                    # the 4-piece grants it on every Missiles channel
+MISSILES_PROOF = 3
 SPEC_CHECKS = {"arcane_sunfury_4pc": check_arcane_sunfury}
 
 
 def pull_signals(enc, guid):
-    """(spec ID from this pull's COMBATANT_INFO or None, buffs gained, whether Arcane Missiles was cast)."""
-    spec_id, auras, missiles = None, set(), False
+    """(spec ID from this pull's COMBATANT_INFO or None, buffs seen, Arcane Missiles casts)."""
+    spec_id, auras, missiles = None, set(), 0
     for _, f in enc.events:
         if f[0] == "COMBATANT_INFO" and f[1] == guid and f[2].isdigit() and int(f[2]) in SPECS:
             spec_id = int(f[2])
-        elif f[0] == "SPELL_AURA_APPLIED" and len(f) > 10 and f[5] == guid:
-            auras.add(f[10])
+        elif f[0].startswith("SPELL_AURA_") and len(f) > 10 and f[5] == guid:
+            auras.add(f[10])  # any aura event: a buff already up at the pull start only logs DOSE/REFRESH
         elif f[0] == "SPELL_CAST_SUCCESS" and len(f) > 10 and f[1] == guid and f[10] == "Arcane Missiles":
-            missiles = True
+            missiles += 1
     return spec_id, auras, missiles
 
 
@@ -362,7 +363,9 @@ def detect_builds(encounters, guid):
     (no Sunfury buff; no Missiles cast to prove the 4-piece absent) do other pulls with the same spec decide.
     """
     signals = [pull_signals(e, guid) for e in encounters]
-    specs, last = [], None
+    # Carry the spec forward; pulls before the first COMBATANT_INFO take the first one seen.
+    last = next((s for s, _, _ in signals if s), None)
+    specs = []
     for spec_id, _, _ in signals:
         last = spec_id or last
         specs.append(last)
@@ -373,10 +376,11 @@ def detect_builds(encounters, guid):
     for spec_id, (_, auras, missiles) in zip(specs, signals):
         same_spec = by_spec[spec_id]
         # A pull can't prove Sunfury absent (Spheres and Soul may just not have come up), so fall back freely.
+        # Known limit: a Sunfury -> Spellslinger swap within one spec isn't caught (#10).
         sunfury = spec_id == ARCANE and bool((auras | same_spec) & SUNFURY_AURAS)
         if SET_4PC_AURA in auras:
             set_4pc = True
-        elif missiles:
+        elif missiles >= MISSILES_PROOF:  # enough channels that a missing Cumulative Power is no fluke
             set_4pc = False
         else:
             set_4pc = SET_4PC_AURA in same_spec

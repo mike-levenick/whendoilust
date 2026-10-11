@@ -99,6 +99,7 @@ class Output(LogTest):
 OTHER = 'Player-1-00000002,"Othermage-Realm-US",0x512,0x80000000'
 SOUL_4PC = combatant(62) + [(0.2, aura("Arcane Soul", 451038)), (0.3, aura("Cumulative Power", 1296930))]
 MISSILES = [(1.000, cc("SPELL_AURA_APPLIED")), (1.500, cast(5143, "Arcane Missiles"))]
+THREE_MISSILES = [(t, cast(5143, "Arcane Missiles")) for t in (1.5, 5.0, 9.0)]
 
 
 def two_pulls(path, first, second):
@@ -151,8 +152,8 @@ class BuildGate(LogTest):
         self.assertEqual([p["players"][0]["build"]["supported"] for p in pulls], [True, True])
 
     def test_each_pull_is_judged_on_its_own_build(self):
-        # Pull 2: Missiles cast but no Cumulative Power, so the 4-piece was swapped off.
-        two_pulls(self.path, SUNFURY_4PC + MISSILES, combatant(62) + MISSILES)
+        # Pull 2: three Missiles channels and no Cumulative Power, so the 4-piece was swapped off.
+        two_pulls(self.path, SUNFURY_4PC + MISSILES, combatant(62) + THREE_MISSILES)
         builds = [p["players"][0]["build"] for p in json.loads(self.run_cli("--json"))["pulls"]]
         self.assertEqual([b["unsupported_reason"] for b in builds], [None, "no_4pc"])
         # Respec: pull 2 reports its own spec, and pull 1 keeps Arcane.
@@ -160,6 +161,25 @@ class BuildGate(LogTest):
         builds = [p["players"][0]["build"] for p in json.loads(self.run_cli("--json"))["pulls"]]
         self.assertEqual([b["spec_name"] for b in builds], ["Arcane", "Frost Mage"])
         self.assertEqual([b["supported"] for b in builds], [True, False])
+
+    def test_weak_or_missing_signals_fall_back_to_other_pulls(self):
+        cp_refresh = f"SPELL_AURA_REFRESH,{ME},{ME},1296930,\"Cumulative Power\",0x40,BUFF"
+        cases = (
+            # One cancelled channel and no Cumulative Power is no proof the set was swapped off.
+            ("one Missiles, no Cumulative Power", SUNFURY_4PC, combatant(62) + MISSILES, [True, True]),
+            # Cumulative Power already up at the pull start only logs REFRESH/DOSE.
+            ("Cumulative Power refresh only", combatant(62) + [(0.2, aura("Spellfire Sphere", 448604))],
+             combatant(62) + [(0.2, aura("Spellfire Sphere", 448604)), (1.4, cp_refresh)] + THREE_MISSILES,
+             [True, True]),
+            # A pull before the first COMBATANT_INFO takes the first spec seen.
+            ("no COMBATANT_INFO in pull 1", [(0.2, aura("Spellfire Sphere", 448604))] + MISSILES, SUNFURY_4PC,
+             [True, True]),
+        )
+        for name, first, second, supported in cases:
+            with self.subTest(name):
+                two_pulls(self.path, first, second)
+                builds = [p["players"][0]["build"] for p in json.loads(self.run_cli("--json"))["pulls"]]
+                self.assertEqual([b["supported"] for b in builds], supported)
 
     def test_combatant_info_lines_dont_confuse_player_or_analysis(self):
         other = f"COMBATANT_INFO,Player-1-00000002,1,1,1,1,1,0,63,[(1,2,1)],(0,0,0,0),[]"
