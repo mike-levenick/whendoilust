@@ -30,6 +30,12 @@ CLEARCASTING_MAX = 3
 REACTION = 0.4  # seconds; a proc that appeared this recently before a cast isn't counted as "available"
 PROCS = {"Clearcasting", "Prismatic Bolt!", "Arcane Soul"}  # reaction allowance applies to these, not to resources
 
+# Timeline windows: buffs on the player, plus Touch of the Magi, a debuff the player puts on the target.
+WINDOW_BUFFS = {"Arcane Surge": "Arcane Surge", "Arcane Soul": "Arcane Soul", "Bloodlust": "Lust", "Heroism": "Lust",
+                "Time Warp": "Lust", "Primal Rage": "Lust", "Fury of the Aspects": "Lust"}
+WINDOW_DEBUFFS = {"Touch of the Magi": "Touch of the Magi"}
+SERIES = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting"}  # stack counts over time
+
 # Spells that aren't part of the damage rotation, excluded from "casts" accounting.
 NON_ROTATIONAL = {"Arcane Intellect", "Freightrunner's Flask"}
 
@@ -122,6 +128,10 @@ def analyze(enc, guid):
     charge_waste_by = Counter()
     failed = Counter()
     salvo_capped_hits = 0              # Missiles hits landing while Arcane Salvo was already at 25
+    windows = defaultdict(list)        # window name -> [[start, end or None]]
+    open_span = {}                     # (spell, target) -> open [start, None] span; two lusts don't collide
+    window_spells = set()              # spells that already have a span (so a REMOVED isn't a pre-pull buff)
+    series = defaultdict(list)         # SERIES key -> [(t, stacks)]
 
     for t, f in enc.events:
         ev = f[0]
@@ -146,6 +156,24 @@ def analyze(enc, guid):
                 if spell == "Clearcasting" and stacks[spell] >= CLEARCASTING_MAX and not (auras[spell] and auras[spell][-1][0] == t):
                     ev = "CAPPED"
             auras[spell].append((t, ev))
+            if spell in SERIES and (not series[SERIES[spell]] or series[SERIES[spell]][-1][1] != stacks[spell]):
+                series[SERIES[spell]].append((t, stacks[spell]))
+        window = (WINDOW_BUFFS.get(spell) if dst == guid else None) or \
+                 (WINDOW_DEBUFFS.get(spell) if src == guid and dst != guid else None)
+        if window and ev == "SPELL_AURA_APPLIED":
+            # A new application ends this spell's other spans (Touch moved to a new target, maybe one that died
+            # without a REMOVED being logged).
+            for key in [k for k in open_span if k[0] == spell]:
+                open_span.pop(key)[1] = t
+            open_span[(spell, dst)] = [t, None]
+            windows[window].append(open_span[(spell, dst)])
+            window_spells.add(spell)
+        elif window and ev == "SPELL_AURA_REMOVED":
+            if (spell, dst) in open_span:
+                open_span.pop((spell, dst))[1] = t
+            elif dst == guid and spell not in window_spells:  # buff already up when the pull started
+                windows[window].append([t0, t])
+                window_spells.add(spell)
         if src != guid:
             continue
         if ev == "SPELL_CAST_START":
@@ -186,6 +214,14 @@ def analyze(enc, guid):
     if end - cursor > IDLE_THRESHOLD:
         gaps.append((cursor - t0, end - cursor))
     idle = sum(g for _, g in gaps)
+    # Clip to what was analysed: nothing after death (a battle res would otherwise draw past the chart).
+    for name in list(windows):
+        spans = [[a, min(b if b is not None else end, end)] for a, b in windows[name] if a < end]
+        windows[name] = [[a, b] for a, b in spans if b > a]
+        if not windows[name]:
+            del windows[name]
+    for key in list(series):
+        series[key] = [(t, n) for t, n in series[key] if t <= end]
 
     return {
         "fight_len": fight_len,
@@ -199,6 +235,8 @@ def analyze(enc, guid):
         "charge_waste_by": charge_waste_by,
         "failed": failed,
         "salvo_capped_hits": salvo_capped_hits,
+        "windows": windows,
+        "series": series,
     }
 
 
@@ -453,6 +491,9 @@ def summarize(enc, guid, name, build, checks):
         "abilities": dict(counts.most_common()),
         "failed_casts": [{"spell": s, "reason": why, "count": n} for (s, why), n in r["failed"].most_common()],
         "spec_checks": spec,
+        "windows": {name: [{"start": rnd(a - t0), "end": rnd(b - t0)} for a, b in spans]
+                    for name, spans in sorted(r["windows"].items())},
+        "series": {key: [[rnd(t - t0), n] for t, n in points] for key, points in sorted(r["series"].items())},
         "timeline": timeline,
     }
 

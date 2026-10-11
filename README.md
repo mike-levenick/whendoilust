@@ -27,6 +27,9 @@ python3 wowlog.py --pull 3            # a specific pull
 python3 wowlog.py --boss Avatar       # every pull of a boss
 python3 wowlog.py --last --json       # machine-readable report
 python3 wowlog.py path/to/WoWCombatLog-*.txt --compare SomeMage   # another player in the same log
+
+python3 wowlog.py --json > report.json
+python3 report.py report.json -o report.html   # self-contained HTML report (add --coaching, see docs/coaching.md)
 ```
 
 By default it reads the newest log in the retail `Logs` folder, including logs
