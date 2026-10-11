@@ -14,11 +14,11 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import report  # noqa: E402
 import wowlog  # noqa: E402
-from test_wowlog import ME, SUNFURY_4PC, aura, cast, cc, write_log  # noqa: E402
+from test_wowlog import BOSS, ME, SUNFURY_4PC, aura, cast, cc, hit, write_log  # noqa: E402
 
 # Every per-player key the template reads; the fixture comes from wowlog itself, so drift fails here.
 PLAYER_KEYS = {"name", "guid", "build", "time_alive", "died_at", "casts", "casts_per_minute", "idle", "abilities",
-               "failed_casts", "spec_checks", "windows", "series", "timeline"}
+               "failed_casts", "spec_checks", "windows", "series", "damage", "timeline"}
 HOSTILE = ["</script><script>alert(1)</script>", "</SCRIPT>", "</script ", "<!--<script>", "-->", "<script>",
            "  ", "{{COACHING}}", "{{REPORT}}", "{{TITLE}}", "&lt;&amp;"]
 
@@ -32,7 +32,8 @@ def real_report(name_suffix=""):
             (1.5, cast(5143, "Arcane Missiles")), (2.0, cc("SPELL_AURA_APPLIED_DOSE", 2)),
             (2.2, aura("Arcane Salvo", 1242974)),
             (2.6, f"SPELL_AURA_APPLIED_DOSE,{ME},{ME},1242974,\"Arcane Salvo\",0x40,BUFF,6"),
-            (4.0, cast(44425, "Arcane Barrage")), (6.0, cast(30451, "Arcane Blast")),
+            (4.0, cast(44425, "Arcane Barrage")), (4.2, hit(ME, BOSS, "Arcane Barrage", 52000, crit=True)),
+            (6.0, cast(30451, "Arcane Blast")), (7.1, hit(ME, BOSS, "Arcane Blast", 9000)),
             (18.0, aura("Arcane Surge", 365362).replace("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED")),
         ])
         if name_suffix:
@@ -410,7 +411,9 @@ class Renders(unittest.TestCase):
             done = subprocess.run([find_browser(), "--headless=new", "--disable-gpu", "--no-sandbox", "--dump-dom",
                                    "--virtual-time-budget=3000", f"file://{path}#pull-1@4"],
                                   capture_output=True, text=True, timeout=60)
-        return done.stdout
+        # Drop the inline scripts: they hold the template's own strings and the embedded data, which would
+        # satisfy an assertion even if nothing rendered.
+        return re.sub(r"<script\b.*?</script>", "", done.stdout, flags=re.S)
 
     def test_supported_report_renders_every_section(self):
         dom = self.render_dom(real_report(), coaching())
@@ -418,7 +421,7 @@ class Renders(unittest.TestCase):
         self.assertIn("<svg", dom)
         self.assertIn("Habit 1", dom)
         self.assertIn("Keep Salvo high.", dom)
-        for section in ("What went well", "Work on", "Top tips for next pull"):
+        for section in ("What went well", "Work on", "Top tips for next pull", "Damage by spell", "DPS (5s avg)", "61.0K damage, pets included", "61.0K damage over 1 pull"):
             self.assertIn(section, dom)
         self.assertNotIn(">Trend<", dom)  # no --history, no trend section
 
