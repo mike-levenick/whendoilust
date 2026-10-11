@@ -73,34 +73,35 @@ def check_coaching(report, coaching):
             return players[0] if players else None
         return next((pl for pl in players if pl["name"].lower().startswith(str(name).lower())), None)
 
-    habits = coaching.get("habits", [])
-    if not isinstance(habits, list) or not all(isinstance(h, dict) for h in habits):
-        problems.append("habits must be a list of objects")
-        habits = []
-    if len(habits) > 3:
-        problems.append(f"{len(habits)} habits; the report shows the top 3 only")
     supported = [n for n, p in pulls.items() if (coached(p) or {}).get("build", {}).get("supported")]
-    if habits and not supported:
-        problems.append("habits written for a build without spec coaching (build.supported is false in every pull)")
-    for i, h in enumerate(habits, 1):
-        moments = h.get("moments", [])
-        if not isinstance(moments, list) or not all(isinstance(m, dict) for m in moments):
-            problems.append(f"habit {i}: moments must be a list of objects")
+    for key, label, cap in (("habits", "habit", 3), ("strengths", "strength", 3)):
+        items = coaching.get(key, [])
+        if not isinstance(items, list) or not all(isinstance(h, dict) for h in items):
+            problems.append(f"{key} must be a list of objects")
             continue
-        for m in moments:
-            number, t = m.get("pull"), m.get("t")
-            pull = pulls.get(number) if isinstance(number, int) and not isinstance(number, bool) else None
-            if pull is None:
-                problems.append(f"habit {i}: no pull #{number} in this report")
+        if len(items) > cap:
+            problems.append(f"{len(items)} {key}; the report shows the top {cap} only")
+        if items and not supported:
+            problems.append(f"{key} written for a build without spec coaching (build.supported is false in every pull)")
+        for i, h in enumerate(items, 1):
+            moments = h.get("moments", [])
+            if not isinstance(moments, list) or not all(isinstance(m, dict) for m in moments):
+                problems.append(f"{label} {i}: moments must be a list of objects")
                 continue
-            player = coached(pull, m.get("player"))
-            if player is None:
-                problems.append(f"habit {i}: no player {m.get('player')!r} in pull #{number}")
-            elif not player["build"]["supported"]:
-                problems.append(f"habit {i}: pull #{number} has no spec coaching for {player['name']} "
-                                f"({player['build']['unsupported_reason']})")
-            elif not is_number(t) or not any(round(abs(a - t), 3) <= TOLERANCE for a in anchor_times(player)):
-                problems.append(f"habit {i}: nothing in pull #{number} within {TOLERANCE}s of t={t!r}")
+            for m in moments:
+                number, t = m.get("pull"), m.get("t")
+                pull = pulls.get(number) if isinstance(number, int) and not isinstance(number, bool) else None
+                if pull is None:
+                    problems.append(f"{label} {i}: no pull #{number} in this report")
+                    continue
+                player = coached(pull, m.get("player"))
+                if player is None:
+                    problems.append(f"{label} {i}: no player {m.get('player')!r} in pull #{number}")
+                elif not player["build"]["supported"]:
+                    problems.append(f"{label} {i}: pull #{number} has no spec coaching for {player['name']} "
+                                    f"({player['build']['unsupported_reason']})")
+                elif not is_number(t) or not any(round(abs(a - t), 3) <= TOLERANCE for a in anchor_times(player)):
+                    problems.append(f"{label} {i}: nothing in pull #{number} within {TOLERANCE}s of t={t!r}")
     notes = coaching.get("pulls", {})
     if not isinstance(notes, dict):
         problems.append("pulls must be an object keyed by pull number")
@@ -111,21 +112,97 @@ def check_coaching(report, coaching):
     for key in ("headline",):
         if key in coaching and not isinstance(coaching[key], str):
             problems.append(f"{key} must be a string")
-    if "caveats" in coaching and not (isinstance(coaching["caveats"], list)
-                                      and all(isinstance(c, str) for c in coaching["caveats"])):
-        problems.append("caveats must be a list of strings")
+    for key in ("caveats", "tips"):
+        if key in coaching and not (isinstance(coaching[key], list) and all(isinstance(c, str) for c in coaching[key])):
+            problems.append(f"{key} must be a list of strings")
+    if isinstance(coaching.get("tips"), list) and len(coaching["tips"]) > 3:
+        problems.append(f"{len(coaching['tips'])} tips; the report shows 3 at most")
     return problems
 
 
-def render(report, coaching=None):
+def main_player(report):
+    """Name of the player the report is about (the first player of its first pull with one), or None."""
+    for pull in report.get("pulls", []):
+        for p in pull.get("players") or []:
+            return p.get("name")
+    return None
+
+
+def session_point(report):
+    """One session's headline numbers for the trend chart, from a wowlog.py --json report (main player only).
+    Raises KeyError/TypeError/AttributeError on a report that isn't wowlog output."""
+    matched = total = gained = wasted = 0
+    idle = alive = casts = 0.0
+    pulls = report["pulls"]
+    for pull in pulls:
+        p = (pull.get("players") or [None])[0]
+        if not p:
+            continue
+        idle += p["idle"]["total"]; alive += p["time_alive"]; casts += p["casts"]
+        c = p.get("spec_checks")
+        if c:
+            matched += c["priority"]["matched"]; total += c["priority"]["total"]
+            gained += c["clearcasting"]["gained"]
+            wasted += sum(1 for w in c["clearcasting"]["wasted"] if not w["in_soul"])
+    started = report["log_started"]
+    if not isinstance(started, str):
+        raise TypeError("log_started")
+    return {
+        "started": started,
+        "date": started[:10],
+        "content": " / ".join(sorted({str(d) if d == "M+" else f"{d} raid" for d in (p["difficulty"] for p in pulls)})) or "?",
+        "bosses": sorted({str(p["boss"]) for p in pulls}),
+        "pulls": len(pulls),
+        "kills": sum(1 for p in pulls if p["result"] == "kill"),
+        "match": round(100 * matched / total) if total else None,
+        "idle": round(100 * idle / alive) if alive else None,
+        "cc_wasted": round(100 * wasted / gained) if gained else None,
+        "cpm": round(60 * casts / alive) if alive else None,
+    }
+
+
+def same_session(a, b):
+    return a.get("log_started") == b.get("log_started") and \
+        [p.get("number") for p in a.get("pulls", [])] == [p.get("number") for p in b.get("pulls", [])]
+
+
+def history(report, folder):
+    """Trend points, oldest first: this report (marked current) plus every other wowlog.py --json report in `folder`
+    for the same player. Anything else in the folder (coaching files, other players, broken files, another copy of
+    this report) is skipped; a bad file never stops the report."""
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError as e:
+        raise SystemExit(f"Couldn't read the history folder {folder}: {e}")
+    me = main_player(report)
+    points = [dict(session_point(report), current=True)]
+    for name in names:
+        path = os.path.join(folder, name)
+        if not name.endswith(".json") or name.endswith(".coaching.json") or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                past = json.load(f)
+            if not (isinstance(past, dict) and "schema" in past and isinstance(past.get("pulls"), list) and past["pulls"]):
+                continue
+            if main_player(past) != me or same_session(past, report):
+                continue
+            points.append(session_point(past))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+            continue
+    points.sort(key=lambda p: (p["started"], not p.get("current")))
+    return points
+
+
+def render(report, coaching=None, trend=None):
     with open(TEMPLATE, encoding="utf-8") as f:
         page = f.read()
     players = {p["name"] for pull in report["pulls"] for p in pull["players"]}
     who = ", ".join(sorted(n.split("-")[0] for n in players)) or "No player"
     title = f"{who} - {report['log_started'][:10]}"
-    values = {"TITLE": html.escape(title), "REPORT": embed(report), "COACHING": embed(coaching)}
+    values = {"TITLE": html.escape(title), "REPORT": embed(report), "COACHING": embed(coaching), "HISTORY": embed(trend)}
     # One pass, so substituted text (which may contain "{{REPORT}}" in a player name) is never re-expanded.
-    return re.sub(r"\{\{(TITLE|REPORT|COACHING)\}\}", lambda m: values[m.group(1)], page)
+    return re.sub(r"\{\{(TITLE|REPORT|COACHING|HISTORY)\}\}", lambda m: values[m.group(1)], page)
 
 
 def load(path, what):
@@ -150,6 +227,7 @@ def main():
     ap.add_argument("report", help="output of wowlog.py --json ('-' for stdin)")
     ap.add_argument("--coaching", help="coaching JSON written for this report (see docs/coaching.md)")
     ap.add_argument("-o", "--output", default="report.html")
+    ap.add_argument("--history", metavar="DIR", help="folder of earlier --json reports to chart a trend against")
     ap.add_argument("--strict", action="store_true", help="fail instead of warn when the coaching doesn't match the report")
     ap.add_argument("--text", action="store_true", help="print the text report for REPORT.json instead of rendering HTML")
     args = ap.parse_args()
@@ -169,7 +247,7 @@ def main():
     if problems and args.strict:
         raise SystemExit(1)
     with open(args.output, "w", encoding="utf-8") as f:
-        f.write(render(report, coaching))
+        f.write(render(report, coaching, history(report, args.history) if args.history else None))
     print(os.path.abspath(args.output))
 
 

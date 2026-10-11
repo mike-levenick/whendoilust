@@ -89,10 +89,14 @@ If `$BASE.txt` says "No boss encounters", the selection matched nothing: say so 
 Read `$REPO/docs/coaching.md` and follow its format and writing rules exactly. The essentials:
 
 - A one or two sentence `headline`: the overall verdict and the biggest lever.
+- **Up to 3 strengths** ("What went well"): real things done well, with the numbers (a clean opener, Soul
+  spent on Barrage, Touch on cooldown, low Clearcasting waste). Never padded with generic praise.
 - **Up to 3 habits** across the selected pulls, ranked by how much they'd gain; fewer if there genuinely
   aren't three, never padded. Each has `what` (with the real numbers), `instead`, `why` (the mechanic), and
   2-3 `moments`: `pull` = the pull number, `t` = a time copied exactly from the JSON (a cast, a wasted proc, a Soul
   window, an idle gap, a cooldown use). Add `"player": "Name"` for a moment about the comparison player.
+- **Up to 3 tips** ("Top tips for next pull"): one-line cues the player can remember mid-fight, usually the
+  habits boiled down.
 - One or two sentences per pull in `pulls`, skipping pulls with nothing to say.
 - `caveats` wherever a flagged cast may be correct: the analyzer assumes one target, so "Barrage, priority
   says filler" on add-heavy fights (most M+ bosses) can be right; Arcane Charges are approximate.
@@ -104,12 +108,16 @@ Write it to `$BASE.coaching.json`.
 ## 5. Render and check
 
 ```bash
-"$PY" "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict
+"$PY" "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict --history "$OUT"
 ```
 
+`--history "$OUT"` adds a **Trend** section from the earlier reports in the folder (same character only;
+this run's own JSON is recognised and skipped). If the trend shows a clear change since the last report,
+you may mention it in the headline, but name the content (raid vs M+), since those aren't directly comparable.
+
 `--strict` prints every `coaching:` problem and fails: a moment with nothing within 0.05s in that pull, a
-note for a pull that isn't in the report, a moment in a pull without spec coaching, more than 3 habits, or
-a wrongly shaped file. Fix the coaching and re-run until it passes; never drop `--strict` to get past it,
+note for a pull that isn't in the report, a moment in a pull without spec coaching, more than 3 habits,
+strengths or tips, or a wrongly shaped file. Fix the coaching and re-run until it passes; never drop `--strict` to get past it,
 and never move a moment to an unrelated time just to pass.
 
 Then open it: `open "$BASE.html"` on macOS, `xdg-open "$BASE.html"` on Linux, and on Windows
@@ -117,7 +125,8 @@ Then open it: `open "$BASE.html"` on macOS, `xdg-open "$BASE.html"` on Linux, an
 
 ## 6. Reply
 
-In the chat, keep it short: the headline, each habit in one line, and the path to the HTML. Mention it's a
+In the chat, keep it short: the headline, one line each for what went well and each habit, and the path
+to the HTML. Mention it's a
 single file they can share or print to PDF (the **Save as PDF** button). Don't paste the whole coaching or
 the text report.
 

@@ -43,6 +43,7 @@ python3 wowlog.py path/to/WoWCombatLog-*.txt --compare SomeMage   # another play
 
 python3 wowlog.py --json > report.json
 python3 report.py report.json -o report.html   # self-contained HTML report (add --coaching, see docs/coaching.md)
+python3 report.py report.json --history ~/Documents/whendoilust-reports -o report.html   # + trend vs earlier reports
 ```
 
 By default it reads the newest log in the retail `Logs` folder, including logs
