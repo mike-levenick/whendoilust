@@ -96,30 +96,88 @@ class Output(LogTest):
         self.assertIn("Matched the SimC priority on 1/1 rotational casts (100%)", text)
 
 
+OTHER = 'Player-1-00000002,"Othermage-Realm-US",0x512,0x80000000'
+SOUL_4PC = combatant(62) + [(0.2, aura("Arcane Soul", 451038)), (0.3, aura("Cumulative Power", 1296930))]
+MISSILES = [(1.000, cc("SPELL_AURA_APPLIED")), (1.500, cast(5143, "Arcane Missiles"))]
+
+
+def two_pulls(path, first, second):
+    """Two 60s boss pulls; each argument is [(seconds into the pull, event text)]."""
+    with open(path, "w") as f:
+        for minute, (boss, body) in enumerate((("Boss One", first), ("Boss Two", second))):
+            lines = [(0, f'ENCOUNTER_START,{9990 + minute},"{boss}",15,20,1')] + body + \
+                    [(59, f'ENCOUNTER_END,{9990 + minute},"{boss}",15,20,1,59000')]
+            for t, text in lines:
+                f.write(f"10/10/2026 20:{minute:02d}:{t:06.3f}-5  {text}\n")
+
+
 class BuildGate(LogTest):
-    def player(self, build):
-        write_log(self.path, [(1.000, cc("SPELL_AURA_APPLIED")), (1.500, cast(5143, "Arcane Missiles"))], build=build)
+    def player(self, build, body=MISSILES):
+        write_log(self.path, body, build=build)
         return json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
 
     def test_supported_build_gets_spec_checks(self):
-        p = self.player(SUNFURY_4PC)
-        self.assertEqual((p["build"]["spec"], p["build"]["hero_tree"], p["build"]["set_4pc"]), ("Arcane", "Sunfury", True))
-        self.assertIsNotNone(p["spec_checks"])
-        self.assertTrue(p["timeline"][0]["matched"])
-
-    def test_other_builds_get_generic_stats_only(self):
-        no_4pc = combatant(62) + [(0.2, aura("Spellfire Sphere", 448604))]
-        not_sunfury = combatant(62) + [(0.3, aura("Cumulative Power", 1296930))]
-        fire = combatant(63) + [(0.2, aura("Spellfire Sphere", 448604)), (0.3, aura("Cumulative Power", 1296930))]
-        for name, build in (("no 4-piece", no_4pc), ("not Sunfury", not_sunfury), ("Fire", fire)):
+        for name, build in (("Spellfire Sphere", SUNFURY_4PC), ("Arcane Soul", SOUL_4PC)):
             with self.subTest(name):
                 p = self.player(build)
-                self.assertFalse(p["build"]["supported"])
+                self.assertEqual(p["build"], {"spec_id": 62, "spec_name": "Arcane", "hero_tree": "Sunfury",
+                                              "set_4pc": True, "supported": True, "unsupported_reason": None})
+                self.assertIsNotNone(p["spec_checks"])
+                self.assertTrue(p["timeline"][0]["matched"])
+                self.assertIn("  Build: Arcane Sunfury, Season 2 4-piece\n", self.run_cli())
+
+    def test_other_builds_get_generic_stats_only(self):
+        sphere, cp = (0.2, aura("Spellfire Sphere", 448604)), (0.3, aura("Cumulative Power", 1296930))
+        cases = (
+            ("no 4-piece", combatant(62) + [sphere], "no_4pc", "Arcane Sunfury, no Season 2 4-piece"),
+            ("no Sunfury buff", combatant(62) + [cp], "sunfury_not_detected", "Arcane, Sunfury not detected"),
+            ("Fire", combatant(63) + [sphere, cp], "not_arcane", "Fire"),
+            ("no COMBATANT_INFO", [sphere, cp], "spec_unknown", "spec unknown"),
+            ("unrecognized spec ID", combatant(9999) + [sphere, cp], "spec_unknown", "spec unknown"),
+        )
+        for name, build, reason, text in cases:
+            with self.subTest(name):
+                p = self.player(build)
+                self.assertEqual((p["build"]["supported"], p["build"]["unsupported_reason"]), (False, reason))
                 self.assertIsNone(p["spec_checks"])
                 self.assertNotIn("expected", p["timeline"][0])  # no priority verdicts
                 self.assertEqual(p["abilities"], {"Arcane Missiles": 1})  # generic stats still there
-        self.assertEqual(p["build"]["spec"], "Fire")
-        self.assertIn("spec coaching only supports Arcane Sunfury with the Season 2 4-piece", self.run_cli())
+                self.assertIn(f"  Build: {text} - spec coaching only supports Arcane Sunfury with the Season 2 4-piece",
+                              self.run_cli())
+
+    def test_signature_buffs_in_an_earlier_pull_count_for_a_later_one(self):
+        two_pulls(self.path, SUNFURY_4PC, combatant(62) + [(1.0, cc("SPELL_AURA_APPLIED"))])  # pull 2: no casts
+        pulls = json.loads(self.run_cli("--json"))["pulls"]
+        self.assertEqual([p["players"][0]["build"]["supported"] for p in pulls], [True, True])
+
+    def test_each_pull_is_judged_on_its_own_build(self):
+        # Pull 2: Missiles cast but no Cumulative Power, so the 4-piece was swapped off.
+        two_pulls(self.path, SUNFURY_4PC + MISSILES, combatant(62) + MISSILES)
+        builds = [p["players"][0]["build"] for p in json.loads(self.run_cli("--json"))["pulls"]]
+        self.assertEqual([b["unsupported_reason"] for b in builds], [None, "no_4pc"])
+        # Respec: pull 2 reports its own spec, and pull 1 keeps Arcane.
+        two_pulls(self.path, SUNFURY_4PC + MISSILES, combatant(64) + MISSILES)
+        builds = [p["players"][0]["build"] for p in json.loads(self.run_cli("--json"))["pulls"]]
+        self.assertEqual([b["spec_name"] for b in builds], ["Arcane", "Frost Mage"])
+        self.assertEqual([b["supported"] for b in builds], [True, False])
+
+    def test_combatant_info_lines_dont_confuse_player_or_analysis(self):
+        other = f"COMBATANT_INFO,Player-1-00000002,1,1,1,1,1,0,63,[(1,2,1)],(0,0,0,0),[]"
+        aura_on_other = f"SPELL_AURA_APPLIED,{OTHER},{OTHER},1296930,\"Cumulative Power\",0x40,BUFF"
+        with open(self.path, "w") as f:
+            # A COMBATANT_INFO before any encounter, a truncated one, and another player's buffs and spec.
+            f.write(f"10/10/2026 19:59:59.000-5  {other}\n10/10/2026 19:59:59.500-5  COMBATANT_INFO\n")
+        body = [(0.05, other), (0.06, aura_on_other)] + MISSILES
+        with open(self.path, "a") as f:
+            for t, text in [(0, 'ENCOUNTER_START,9999,"Training Dummy",15,20,1')] + SUNFURY_4PC + body + \
+                           [(60, 'ENCOUNTER_END,9999,"Training Dummy",15,20,1,60000')]:
+                f.write(f"10/10/2026 20:{int(t // 60):02d}:{t % 60:06.3f}-5  {text}\n")
+        p = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
+        self.assertEqual(p["name"], "Testmage-Realm-US")
+        self.assertTrue(p["build"]["supported"])
+        self.assertEqual(p["abilities"], {"Arcane Missiles": 1})
+        other_p = json.loads(self.run_cli("--json", "--player", "Othermage"))["pulls"][0]["players"][0]
+        self.assertEqual((other_p["build"]["spec_name"], other_p["build"]["unsupported_reason"]), ("Fire", "not_arcane"))
 
 
 class NewestLog(unittest.TestCase):
