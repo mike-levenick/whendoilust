@@ -9,62 +9,84 @@ argument-hint: "[last pull | session | boss name | pull N | path/to/WoWCombatLog
 Turns a WoW advanced combat log into a coached report: `wowlog.py` replays every cast against the SimC
 Arcane Sunfury priority, you write the coaching, and `report.py` renders one self-contained HTML file.
 
+The commands below are bash (macOS, Linux, or Git Bash on Windows). In PowerShell, run the same programs
+with PowerShell syntax. **If any command fails, stop and report the error**; don't carry on with partial
+files.
+
 ## 1. Find the tools
 
-The skill may be installed by symlink, so resolve its real location and use the repo it lives in:
+The skill may be installed by symlink or by copying its folder, so find the checkout it belongs to by
+walking up from the skill's real location (no git needed). Use whichever Python is installed:
 
 ```bash
-SKILL_FILE="<this skill's base directory>/SKILL.md"
-REPO=$(cd "$(dirname "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$SKILL_FILE")")" && git rev-parse --show-toplevel)
-ls "$REPO/wowlog.py" "$REPO/report.py" "$REPO/docs/coaching.md"
+PY=$(command -v python3 || command -v python || command -v py)
+REPO=$("$PY" -c '
+import os, sys
+d = os.path.dirname(os.path.realpath(sys.argv[1]))
+while d != os.path.dirname(d) and not os.path.exists(os.path.join(d, "wowlog.py")):
+    d = os.path.dirname(d)
+print(d if os.path.exists(os.path.join(d, "wowlog.py")) else "")' "<this skill's base directory>/SKILL.md")
 ```
 
-If any is missing, stop and say the skill must stay inside its `whendoilust` checkout (install it with the
-symlink in the README). Python 3.9+ is the only requirement; never install packages.
+- No Python: tell the user to install Python 3.9+ (python.org); never install packages.
+- `REPO` empty: the skill was copied away from its `whendoilust` checkout. Tell the user to install it as
+  the README says (clone, then symlink `.claude/skills/coach` into `~/.claude/skills/arcane-coach`).
 
 ## 2. Pick the log, the pulls, and the character
 
 ```bash
-python3 "$REPO/wowlog.py" --list            # newest log; add a path, or --log-dir DIR, if the user gave one
+"$PY" "$REPO/wowlog.py" --list            # newest log; add a path, or --log-dir DIR, if the user gave one
 ```
 
 - **Log**: the newest one, unless the user named a file or folder. If none is found, the error lists where
-  it looked; ask for the path (Windows logs live in `...\World of Warcraft\_retail_\Logs`). Remind them
-  that logging needs **Advanced Combat Logging** on and `/combatlog` typed in game.
-- **Pulls**: "last pull" means the last one (`--last`). "Tonight", "the key", "the session" or no
-  qualifier means every pull in the log. A boss name means `--boss NAME`. "Pull 3" means `--pull 3`. Don't
-  ask when the request maps cleanly onto one of these.
-- **Character**: whoever recorded the log, by default. Use `--player NAME` only when the user names someone
-  else. Add `--compare NAME` only if the user asks for a comparison *and* that player is in the log.
+  it looked; ask for the path (Windows logs live in `...\World of Warcraft\_retail_\Logs`). Remind them that
+  logging needs **Advanced Combat Logging** on and `/combatlog` typed in game.
+- **Pulls**: "last pull" means `--last`. "Tonight", "the key", "the session" or no qualifier means every pull
+  in the log. A boss name means `--boss NAME`; "pull 3" means `--pull 3` (numbers from `--list`). If that
+  is more than 8 pulls, ask whether to coach all of them, the kills only, or one boss; three habits across
+  20 pulls get too thin. If the selection is empty ("No boss encounters"), say so and stop.
+- **Character**: whoever recorded the log, by default. `--player NAME` only when the user names someone else.
+  It is a prefix match, so check that the name in the report header is the one they meant.
+- **Comparison**: `--compare NAME` only when the user asks for one. If the run fails with "Couldn't find
+  NAME in this log", run again without `--compare` and tell the user that player wasn't in the log.
 
 ## 3. Run the analysis
 
-Save everything under a reports folder so past sessions are kept:
+Keep each run's files together under a reports folder:
 
 ```bash
 OUT="${WHENDOILUST_REPORTS:-$HOME/Documents/whendoilust-reports}"; mkdir -p "$OUT"
-BASE="$OUT/<log date>-<short slug, e.g. sethraliss-key or sentinels-pull13>"
-python3 "$REPO/wowlog.py" <log/pull args> > "$BASE.txt"
-python3 "$REPO/wowlog.py" <same args> --json > "$BASE.json"
 ```
 
-Read `$BASE.txt` for the overview: it is the same data as the JSON in a readable form. Pull exact
-timestamps, Salvo values and counts from the JSON with short `python3 -c` one-liners rather than reading
-the whole file (a raid night is over 1 MB).
+Name the run `YYYY-MM-DD-<slug>`: the date of the log (from its file name, `WoWCombatLog-MMDDYY_...`) and a
+slug of lowercase letters, digits and hyphens only (e.g. `sethraliss-key`, `sentinels-pull-13`). If a file
+with that name already exists, add `-2`, `-3`, ... so earlier reports are never overwritten. Then:
 
-**Build gate.** Each player in each pull has `build.supported`. If it's false everywhere, there is no spec
-coaching: say why (`build.unsupported_reason`: not Arcane, Sunfury not detected, no 4-piece, spec
-unknown), write a coaching file with only a `headline` saying so, and still render the report for the
-generic stats.
+```bash
+BASE="$OUT/<name>"
+"$PY" "$REPO/wowlog.py" <log/pull/player args> --json > "$BASE.json"
+"$PY" "$REPO/report.py" "$BASE.json" --text > "$BASE.txt"     # same data, readable; made from the JSON
+```
+
+Read `$BASE.txt` for the overview. Pull exact timestamps, Salvo values and counts from the JSON with short
+`"$PY" -c` one-liners rather than reading the whole file (a raid night is over 1 MB).
+
+**Build gate.** Spec coaching depends on each pull's `players[0].build.supported`:
+- **False in every pull**: no spec coaching. Explain why from `build.unsupported_reason` (not Arcane,
+  Sunfury not detected, no 4-piece, spec unknown), write a coaching file with only a `headline` saying so,
+  and still render the report for the generic stats.
+- **False in some pulls**: coach only the supported pulls, and say in `caveats` which pulls were skipped
+  and why.
 
 ## 4. Write the coaching
 
 Read `$REPO/docs/coaching.md` and follow its format and writing rules exactly. The essentials:
 
 - A one or two sentence `headline`: the overall verdict and the biggest lever.
-- **Top 3 habits** across the selected pulls, ranked by how much they'd gain. Each has `what` (with the
-  real numbers), `instead`, `why` (the mechanic), and 2-3 `moments` copied from real casts in the JSON
-  (`pull` = the pull number, `t` = the cast's `t`).
+- **Up to 3 habits** across the selected pulls, ranked by how much they'd gain; fewer if there genuinely
+  aren't three, never padded. Each has `what` (with the real numbers), `instead`, `why` (the mechanic), and
+  2-3 `moments`: `pull` = the pull number, `t` = a time copied from the JSON (a cast, a wasted proc, a Soul
+  window, an idle gap, a cooldown use). Add `"player": "Name"` for a moment about the comparison player.
 - One or two sentences per pull in `pulls`, skipping pulls with nothing to say.
 - `caveats` wherever a flagged cast may be correct: the analyzer assumes one target, so "Barrage, priority
   says filler" on add-heavy fights (most M+ bosses) can be right; Arcane Charges are approximate.
@@ -76,20 +98,22 @@ Write it to `$BASE.coaching.json`.
 ## 5. Render and check
 
 ```bash
-python3 "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict
+"$PY" "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict
 ```
 
-`--strict` fails if a moment doesn't match a real cast, a pull note names a pull that isn't in the report,
-or there are habits for an unsupported build. Fix the coaching and re-run until it passes; never drop
-`--strict` to get past it.
+`--strict` prints every `coaching:` problem and fails: a moment with nothing at that time in that pull, a
+note for a pull that isn't in the report, a moment in a pull without spec coaching, more than 3 habits, or
+a wrongly shaped file. Fix the coaching and re-run until it passes; never drop `--strict` to get past it,
+and never move a moment to an unrelated time just to pass.
 
-Then open it: `open "$BASE.html"` on macOS, `start "" "$BASE.html"` on Windows, `xdg-open` on Linux.
+Then open it: `open "$BASE.html"` on macOS, `xdg-open "$BASE.html"` on Linux, and on Windows
+`cmd.exe //c start "" "$(cygpath -w "$BASE.html")"` from Git Bash (`Start-Process` in PowerShell).
 
 ## 6. Reply
 
-In the chat, keep it short: the headline, the three habits as one line each, and the path to the HTML.
-Mention it's a single file they can share or print to PDF (the **Save as PDF** button). Don't paste the
-whole coaching or the text report.
+In the chat, keep it short: the headline, each habit in one line, and the path to the HTML. Mention it's a
+single file they can share or print to PDF (the **Save as PDF** button). Don't paste the whole coaching or
+the text report.
 
 ## Don'ts
 

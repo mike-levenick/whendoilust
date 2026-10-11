@@ -124,33 +124,141 @@ class CoachingCheck(unittest.TestCase):
         bad["pulls"] = {"1": "ok", "7": "no such pull"}
         problems = report.check_coaching(real_report(), bad)
         self.assertIn("4 habits; the report shows the top 3 only", problems)
-        self.assertIn("habit 1: pull #1 has no cast within 0.5s of t=30.0", problems)
+        self.assertIn("habit 1: nothing in pull #1 within 0.5s of t=30.0", problems)
         self.assertIn("habit 1: no pull #9 in this report", problems)
-        self.assertIn("habit 1: pull #1 has no cast within 0.5s of t=None", problems)
+        self.assertIn("habit 1: nothing in pull #1 within 0.5s of t=None", problems)
         self.assertIn("pull note for #7, which isn't in this report", problems)
+
+    def test_tolerance_boundary_and_types(self):
+        # The fixture's Barrage is at exactly 4.0s, and nothing else is within 0.6s of it.
+        cases = ((4.5, True), (3.5, True), (4.51, False), (True, False), ("4", False), (float("nan"), False))
+        for t, ok in cases:
+            with self.subTest(t=t):
+                c = coaching()
+                c["habits"][0]["moments"] = [{"pull": 1, "t": t}]
+                self.assertEqual(report.check_coaching(real_report(), c) == [], ok)
+
+    def test_moments_may_cite_any_time_the_report_contains(self):
+        r = real_report()
+        p = r["pulls"][0]["players"][0]
+        p["spec_checks"]["clearcasting"]["wasted"].append({"t": 33.3, "in_soul": False})  # a proc, not a cast
+        for t in (33.3, p["windows"]["Arcane Surge"][0]["start"], p["idle"]["gaps"][-1]["t"]):
+            with self.subTest(t=t):
+                c = coaching()
+                c["habits"][0]["moments"] = [{"pull": 1, "t": t}]
+                self.assertEqual(report.check_coaching(r, c), [])
+
+    def test_moments_are_checked_against_the_named_player_and_their_build(self):
+        r = real_report()
+        other = json.loads(json.dumps(r["pulls"][0]["players"][0]))
+        other["name"], other["timeline"] = "Zaffira-Realm-US", [dict(other["timeline"][0], t=50.0)]
+        r["pulls"][0]["players"].append(other)
+        c = coaching()
+        c["habits"][0]["moments"] = [{"pull": 1, "t": 50.0, "player": "Zaffira"}]
+        self.assertEqual(report.check_coaching(r, c), [])
+        c["habits"][0]["moments"] = [{"pull": 1, "t": 50.0}]  # not one of the main player's times
+        self.assertEqual(report.check_coaching(r, c), ["habit 1: nothing in pull #1 within 0.5s of t=50.0"])
+        c["habits"][0]["moments"] = [{"pull": 1, "t": 4.0, "player": "Nobody"}]
+        self.assertEqual(report.check_coaching(r, c), ["habit 1: no player 'Nobody' in pull #1"])
+        r["pulls"][0]["players"][0]["build"].update(supported=False, unsupported_reason="no_4pc")
+        c["habits"][0]["moments"] = [{"pull": 1, "t": 4.0}]
+        self.assertIn("habit 1: pull #1 has no spec coaching for Testmage-Realm-US (no_4pc)",
+                      report.check_coaching(r, c))
 
     def test_habits_for_an_unsupported_build_are_flagged(self):
         r = real_report()
         r["pulls"][0]["players"][0]["build"]["supported"] = False
-        self.assertIn("habits written for a build without spec coaching (build.supported is false everywhere)",
+        self.assertIn("habits written for a build without spec coaching (build.supported is false in every pull)",
                       report.check_coaching(r, coaching()))
 
-    def test_strict_cli_fails_on_ungrounded_coaching(self):
+    def test_malformed_coaching_is_reported_not_raised(self):
+        shapes = {
+            "not an object": [1], "habits a string": {"habits": "abc"}, "habit null": {"habits": [None]},
+            "moments of strings": {"habits": [{"moments": ["x"]}]}, "moments a string": {"habits": [{"moments": "x"}]},
+            "pull a list": {"habits": [{"moments": [{"pull": [1], "t": 4.0}]}]},
+            "pull a bool": {"habits": [{"moments": [{"pull": True, "t": 4.0}]}]},
+            "pulls a list": {"pulls": [1]}, "pulls a string": {"pulls": "ab"},
+            "unicode digit key": {"pulls": {"\u00b2": "x"}}, "headline a list": {"headline": ["x"]},
+            "caveats a string": {"caveats": "x"},
+        }
+        for name, c in shapes.items():
+            with self.subTest(name):
+                problems = report.check_coaching(real_report(), c)
+                self.assertTrue(problems)
+                self.assertTrue(all(isinstance(p, str) for p in problems))
+        r = real_report()
+        r["pulls"][0]["players"] = []
+        self.assertEqual(report.check_coaching(r, {"habits": [{"moments": [{"pull": 1, "t": 4.0}]}]})[0],
+                         "habits written for a build without spec coaching (build.supported is false in every pull)")
+
+    def run_main(self, c, *flags):
         with tempfile.TemporaryDirectory() as d:
-            rp, cp = os.path.join(d, "r.json"), os.path.join(d, "c.json")
-            json.dump(real_report(), open(rp, "w"))
-            bad = coaching()
-            bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
-            json.dump(bad, open(cp, "w"))
-            argv = ["report.py", rp, "--coaching", cp, "-o", os.path.join(d, "r.html"), "--strict"]
+            rp, cp, html = os.path.join(d, "r.json"), os.path.join(d, "c.json"), os.path.join(d, "r.html")
+            with open(rp, "w") as f:
+                json.dump(real_report(), f)
+            with open(cp, "w") as f:
+                json.dump(c, f)
+            argv = ["report.py", rp, "--coaching", cp, "-o", html, *flags]
+            code = 0
             with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()) as err, \
-                    self.assertRaises(SystemExit):
-                report.main()
-            self.assertIn("no cast within 0.5s", err.getvalue())
-            self.assertFalse(os.path.exists(os.path.join(d, "r.html")))
+                    contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    report.main()
+                except SystemExit as e:
+                    code = e.code
+            return code, err.getvalue(), os.path.exists(html)
+
+    def test_strict_fails_without_writing_and_lenient_warns_and_writes(self):
+        bad = coaching()
+        bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
+        code, err, wrote = self.run_main(bad, "--strict")
+        self.assertEqual((code, wrote), (1, False))
+        self.assertIn("coaching: habit 1: nothing in pull #1 within 0.5s of t=30.0", err)
+        code, err, wrote = self.run_main(bad)
+        self.assertEqual((code, wrote), (0, True))
+        self.assertIn("coaching: habit 1", err)
+        self.assertEqual(self.run_main(coaching(), "--strict"), (0, "", True))
 
 
 class Cli(unittest.TestCase):
+    def test_text_matches_wowlog_for_the_same_json(self):
+        r = real_report()
+        with tempfile.TemporaryDirectory() as d:
+            rp = os.path.join(d, "r.json")
+            with open(rp, "w") as f:
+                json.dump(r, f)
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", ["report.py", rp, "--text"]), contextlib.redirect_stdout(out):
+                report.main()
+        expected = io.StringIO()
+        with contextlib.redirect_stdout(expected):
+            for pull in r["pulls"]:
+                for p in pull["players"]:
+                    wowlog.print_report(pull["label"], p)
+        self.assertEqual(out.getvalue(), expected.getvalue())
+        self.assertIn("Matched the SimC priority", out.getvalue())
+
+    def test_unreadable_input_is_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "bad.json")
+            with open(bad, "w") as f:
+                f.write("{not json")
+            with mock.patch.object(sys, "argv", ["report.py", bad]), self.assertRaises(SystemExit) as err:
+                report.main()
+            self.assertIn("Couldn't read the report file", str(err.exception))
+
+    def test_skill_only_uses_flags_the_scripts_accept(self):
+        root = os.path.join(os.path.dirname(__file__), "..")
+        skill = open(os.path.join(root, ".claude", "skills", "coach", "SKILL.md"), encoding="utf-8").read()
+        accepted = set()
+        for script in ("wowlog.py", "report.py"):
+            accepted |= set(re.findall(r'add_argument\((?:"-\w", )?"(--[a-z-]+)"', open(os.path.join(root, script)).read()))
+        used = set(re.findall(r"(?<![\w-])--[a-z][a-z-]+", skill)) - {"--show-toplevel"}
+        self.assertTrue(used)
+        self.assertEqual(used - accepted, set())
+        self.assertTrue(os.path.exists(os.path.join(root, "docs", "coaching.md")))
+
+
     def test_reads_stdin_and_writes_the_output_file(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "r.html")
