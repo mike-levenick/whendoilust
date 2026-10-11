@@ -112,6 +112,26 @@ def two_pulls(path, first, second):
                 f.write(f"10/10/2026 20:{minute:02d}:{t:06.3f}-5  {text}\n")
 
 
+class Windows(LogTest):
+    def test_buff_and_debuff_windows_and_stack_series(self):
+        touch_on_boss = lambda ev: f"{ev},{ME},{BOSS},210824,\"Touch of the Magi\",0x40,DEBUFF"
+        write_log(self.path, [
+            (2.0, aura("Arcane Surge", 365362)),
+            (2.5, touch_on_boss("SPELL_AURA_APPLIED")),
+            (3.0, cc("SPELL_AURA_APPLIED")),
+            (4.0, cc("SPELL_AURA_APPLIED_DOSE", 2)),
+            (4.0, cc("SPELL_AURA_REFRESH")),            # no stack change: not a new series point
+            (14.5, touch_on_boss("SPELL_AURA_REMOVED")),
+            (19.4, aura("Arcane Surge", 365362).replace("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED")),
+            (50.0, aura("Time Warp", 80353)),            # still up when the pull ends
+        ])
+        p = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
+        self.assertEqual(p["windows"]["Arcane Surge"], [{"start": 2.0, "end": 19.4}])
+        self.assertEqual(p["windows"]["Touch of the Magi"], [{"start": 2.5, "end": 14.5}])
+        self.assertEqual(p["windows"]["Lust"], [{"start": 50.0, "end": 60.0}])
+        self.assertEqual(p["series"]["clearcasting"], [[3.0, 1], [4.0, 2]])
+
+
 class BuildGate(LogTest):
     def player(self, build, body=MISSILES):
         write_log(self.path, body, build=build)

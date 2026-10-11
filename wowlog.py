@@ -30,6 +30,12 @@ CLEARCASTING_MAX = 3
 REACTION = 0.4  # seconds; a proc that appeared this recently before a cast isn't counted as "available"
 PROCS = {"Clearcasting", "Prismatic Bolt!", "Arcane Soul"}  # reaction allowance applies to these, not to resources
 
+# Timeline windows: buffs on the player, plus Touch of the Magi, a debuff the player puts on the target.
+WINDOW_BUFFS = {"Arcane Surge": "Arcane Surge", "Arcane Soul": "Arcane Soul", "Bloodlust": "Lust", "Heroism": "Lust",
+                "Time Warp": "Lust", "Primal Rage": "Lust", "Fury of the Aspects": "Lust"}
+WINDOW_DEBUFFS = {"Touch of the Magi": "Touch of the Magi"}
+SERIES = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting"}  # stack counts over time
+
 # Spells that aren't part of the damage rotation, excluded from "casts" accounting.
 NON_ROTATIONAL = {"Arcane Intellect", "Freightrunner's Flask"}
 
@@ -122,6 +128,8 @@ def analyze(enc, guid):
     charge_waste_by = Counter()
     failed = Counter()
     salvo_capped_hits = 0              # Missiles hits landing while Arcane Salvo was already at 25
+    windows = defaultdict(list)        # window name -> [[start, end or None]]
+    series = defaultdict(list)         # SERIES key -> [(t, stacks)]
 
     for t, f in enc.events:
         ev = f[0]
@@ -146,6 +154,16 @@ def analyze(enc, guid):
                 if spell == "Clearcasting" and stacks[spell] >= CLEARCASTING_MAX and not (auras[spell] and auras[spell][-1][0] == t):
                     ev = "CAPPED"
             auras[spell].append((t, ev))
+            if spell in SERIES and (not series[SERIES[spell]] or series[SERIES[spell]][-1][1] != stacks[spell]):
+                series[SERIES[spell]].append((t, stacks[spell]))
+        window = (WINDOW_BUFFS.get(spell) if dst == guid else None) or \
+                 (WINDOW_DEBUFFS.get(spell) if src == guid and dst != guid else None)
+        if window and ev in ("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED"):
+            spans = windows[window]
+            if ev == "SPELL_AURA_APPLIED" and not (spans and spans[-1][1] is None):
+                spans.append([t, None])
+            elif ev == "SPELL_AURA_REMOVED" and spans and spans[-1][1] is None:
+                spans[-1][1] = t
         if src != guid:
             continue
         if ev == "SPELL_CAST_START":
@@ -186,6 +204,10 @@ def analyze(enc, guid):
     if end - cursor > IDLE_THRESHOLD:
         gaps.append((cursor - t0, end - cursor))
     idle = sum(g for _, g in gaps)
+    for spans in windows.values():
+        for span in spans:
+            if span[1] is None:  # still up when the pull ended
+                span[1] = end
 
     return {
         "fight_len": fight_len,
@@ -199,6 +221,8 @@ def analyze(enc, guid):
         "charge_waste_by": charge_waste_by,
         "failed": failed,
         "salvo_capped_hits": salvo_capped_hits,
+        "windows": windows,
+        "series": series,
     }
 
 
@@ -453,6 +477,9 @@ def summarize(enc, guid, name, build, checks):
         "abilities": dict(counts.most_common()),
         "failed_casts": [{"spell": s, "reason": why, "count": n} for (s, why), n in r["failed"].most_common()],
         "spec_checks": spec,
+        "windows": {name: [{"start": rnd(a - t0), "end": rnd(b - t0)} for a, b in spans]
+                    for name, spans in sorted(r["windows"].items())},
+        "series": {key: [[rnd(t - t0), n] for t, n in points] for key, points in sorted(r["series"].items())},
         "timeline": timeline,
     }
 

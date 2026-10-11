@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10); --wash: rgba(11,11,11,0.05);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --good: #0ca30c; --good-text: #006300; --critical: #d03b3b; --warning: #fab219;
+  --accent: #2a78d6;
+}
+/* Dark mode is screen-only: print and PDF always use the light theme. */
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --wash: rgba(255,255,255,0.06);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --good-text: #0ca30c; --accent: #3987e5;
+  }
+}
+@media screen { :root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --wash: rgba(255,255,255,0.06);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --good-text: #0ca30c; --accent: #3987e5;
+} }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 24px; margin: 0; font-weight: 650; }
+h2 { font-size: 18px; margin: 32px 0 12px; font-weight: 650; }
+h3 { font-size: 15px; margin: 0 0 6px; font-weight: 650; }
+p { margin: 0 0 8px; }
+.sub { color: var(--ink-2); }
+.muted { color: var(--muted); }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
+.actions { display: flex; gap: 8px; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { background: var(--wash); }
+button:focus-visible, .chip:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 16px; }
+.hero { display: grid; grid-template-columns: minmax(200px, 1fr) 2fr; gap: 16px; margin-top: 20px; }
+.hero-figure { font-size: 56px; font-weight: 650; line-height: 1; margin: 8px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 24px; font-weight: 600; }
+.tile .note { color: var(--muted); font-size: 12px; }
+.headline { font-size: 17px; }
+.habits { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.habit .num { color: var(--muted); font-size: 13px; }
+.habit dl { margin: 8px 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.habit dt { color: var(--muted); font-size: 13px; }
+.habit dd { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--ring);
+  background: var(--page); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums; }
+.chip:hover { background: var(--wash); }
+.caveats { color: var(--ink-2); font-size: 14px; margin: 12px 0 0; padding-left: 18px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.tabs button[aria-selected="true"] { border-color: var(--ink); font-weight: 600; }
+.tabs .res { color: var(--muted); font-weight: 400; }
+.pull-note { margin: 0 0 12px; font-size: 16px; }
+.chart-wrap { position: relative; }
+svg { display: block; width: 100%; overflow: visible; }
+svg text { fill: var(--muted); font-size: 12px; }
+svg .lane-label { fill: var(--ink-2); font-size: 12px; }
+.tip { position: absolute; pointer-events: none; z-index: 2; min-width: 200px; max-width: 320px;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); font-size: 13px; display: none; }
+.tip .t { font-weight: 650; font-variant-numeric: tabular-nums; }
+.tip .row { display: flex; gap: 6px; align-items: baseline; }
+.tip .key { display: inline-block; width: 12px; height: 2px; flex: none; position: relative; top: -3px; }
+.tip strong { color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--ink-2); margin: 8px 0 0; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 8px; border-radius: 2px; display: inline-block; }
+.mark-ok { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.mark-bad { color: var(--critical); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--grid); padding: 6px 8px; }
+td { border-bottom: 1px solid var(--grid); padding: 6px 8px; vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--wash); }
+.cols { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 16px; }
+/* grid children may shrink below their content (tables, long words) instead of widening the page */
+.hero > *, .cols > *, .tiles > *, .habits > * { min-width: 0; }
+.scroll-x { overflow-x: auto; }
+.habit dd, td { overflow-wrap: break-word; }
+.empty { color: var(--muted); }
+table.collapsed tr.extra { display: none; }
+details summary { cursor: pointer; color: var(--ink-2); }
+.print-only { display: none; }
+@media (max-width: 720px) {
+  .hero, .cols { grid-template-columns: 1fr; }
+  .hero-figure { font-size: 48px; }
+}
+@media print {
+  :root { --page: #fff; --surface: #fff; }
+  body { font-size: 12px; }
+  .actions, .tabs, .tip, .no-print { display: none !important; }
+  .print-only { display: block; }
+  .card, .pull-print, svg { break-inside: avoid; }
+  table.collapsed tr.extra { display: table-row; }
+  .pull-print { break-before: page; }
+  main { max-width: none; padding: 0; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="title"></h1>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <div class="actions">
+      <button id="theme" type="button" aria-label="Toggle light or dark theme">Theme</button>
+      <button id="pdf" type="button">Save as PDF</button>
+    </div>
+  </header>
+
+  <section class="hero" id="summary"></section>
+
+  <section id="coach"></section>
+
+  <section id="pulls" class="no-print">
+    <h2>Pulls</h2>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div id="pull"></div>
+  </section>
+  <section id="print-pulls" class="print-only"></section>
+
+  <section>
+    <h2>How this works</h2>
+    <p class="sub">Each cast is replayed against the SimulationCraft Arcane Sunfury priority (midnight branch) using the
+    buffs and resources you had at that moment. Procs gained under 0.4s before a cast count as not yet available.
+    The analyzer assumes a single target, so on add-heavy fights some flagged casts can be correct.
+    Arcane Charges are approximate.</p>
+    <p class="muted" id="footer"></p>
+  </section>
+</main>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script type="application/json" id="report-data">{{REPORT}}</script>
+<script type="application/json" id="coaching-data">{{COACHING}}</script>
+<script>
+(function () {
+  "use strict";
+  const report = JSON.parse(document.getElementById("report-data").textContent);
+  const coaching = JSON.parse(document.getElementById("coaching-data").textContent);
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const ROTATION = ["Arcane Missiles", "Arcane Barrage", "Arcane Blast", "Prismatic Bolt", "Arcane Orb", "Arcane Pulse"];
+  const WINDOWS = [["Arcane Surge", "--s1"], ["Touch of the Magi", "--s2"], ["Arcane Soul", "--s3"], ["Lust", "--s4"]];
+
+  // ---------- helpers ----------
+  const $ = (id) => document.getElementById(id);
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) n.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    return n;
+  }
+  // fill/stroke given as "--token" become var() styles, so theme changes and print re-color without a re-render
+  function svg(tag, attrs) {
+    const n = document.createElementNS(SVGNS, tag);
+    let style = "";
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if ((k === "fill" || k === "stroke") && String(v).startsWith("--")) style += `${k}:var(${v});`;
+      else n.setAttribute(k, v);
+    }
+    if (style) n.setAttribute("style", style);
+    return n;
+  }
+  const fmt = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const short = (name) => name.split("-")[0];
+
+  const me = (pull) => pull.players[0];
+  const pulls = report.pulls;
+
+  // ---------- header ----------
+  const names = [...new Set(pulls.flatMap((p) => p.players.map((x) => short(x.name))))];
+  $("title").textContent = names.length ? `${names.join(" vs ")} - rotation report` : "Rotation report";
+  const bosses = [...new Set(pulls.map((p) => p.boss))];
+  $("subtitle").textContent = `${report.log_started.slice(0, 10)} · ${pulls.length} pull${pulls.length === 1 ? "" : "s"}` +
+    (bosses.length ? ` · ${bosses.join(", ")}` : "");
+  $("footer").textContent = `Source log ${report.log} · report schema ${report.schema}`;
+
+  // ---------- session summary ----------
+  function sessionStats() {
+    let matched = 0, total = 0, idle = 0, alive = 0, casts = 0, wasted = 0, gained = 0;
+    const cds = {};
+    let supported = 0;
+    for (const pull of pulls) {
+      const p = me(pull);
+      idle += p.idle.total; alive += p.time_alive; casts += p.casts;
+      const c = p.spec_checks;
+      if (!c) continue;
+      supported++;
+      matched += c.priority.matched; total += c.priority.total;
+      wasted += c.clearcasting.wasted.filter((w) => !w.in_soul).length; gained += c.clearcasting.gained;
+      for (const cd of c.cooldowns) {
+        const s = (cds[cd.spell] = cds[cd.spell] || { uses: 0, possible: 0 });
+        s.uses += cd.uses.length; s.possible += cd.possible;
+      }
+    }
+    return { matched, total, idle, alive, casts, wasted, gained, cds, supported };
+  }
+
+  function tile(label, value, note) {
+    return el("div", { class: "card tile" }, el("div", { class: "label" }, label),
+      el("div", { class: "value" }, value), note ? el("div", { class: "note" }, note) : null);
+  }
+
+  function renderSummary() {
+    const s = sessionStats();
+    const box = $("summary");
+    box.replaceChildren();
+    const heroCard = el("div", { class: "card" });
+    if (s.total) {
+      heroCard.append(el("div", { class: "sub" }, "Matched the SimC priority"),
+        el("div", { class: "hero-figure" }, `${pct(s.matched, s.total)}%`),
+        el("div", { class: "muted" }, `${s.matched} of ${s.total} rotational casts`));
+    } else {
+      const b = pulls.length ? me(pulls[0]).build : null;
+      heroCard.append(el("div", { class: "sub" }, "No spec coaching"),
+        el("p", {}, b && b.unsupported_reason ? "Spec coaching only supports Arcane Sunfury with the Season 2 4-piece."
+          : "No boss pulls in this report."));
+    }
+    const tiles = el("div", { class: "tiles" },
+      tile("Idle time", `${pct(s.idle, s.alive)}%`, `${s.idle.toFixed(0)}s of ${s.alive.toFixed(0)}s alive`),
+      tile("Casts per minute", s.alive ? (60 * s.casts / s.alive).toFixed(0) : "-"));
+    if (s.supported) {
+      tiles.append(tile("Clearcasting wasted", String(s.wasted), `outside Arcane Soul, of ${s.gained} gained`));
+      for (const [spell, v] of Object.entries(s.cds)) tiles.append(tile(spell, `${v.uses}/${v.possible}`, "uses / possible"));
+    }
+    box.append(heroCard, tiles);
+  }
+
+  // ---------- coaching ----------
+  function moments(list) {
+    const chips = el("div", { class: "chips" });
+    for (const m of list || []) {
+      const pull = pulls.find((p) => p.number === m.pull);
+      if (!pull) continue;
+      chips.append(el("button", {
+        class: "chip", type: "button", title: m.note || "",
+        onclick: () => jumpTo(m.pull, m.t),
+      }, `${pull.boss.split(" ")[0]} ${fmt(m.t)}`));
+    }
+    return chips;
+  }
+
+  function renderCoach() {
+    const box = $("coach");
+    box.replaceChildren(el("h2", {}, "Coach"));
+    if (!coaching) {
+      box.append(el("div", { class: "card" }, el("p", { class: "empty" },
+        "No coaching was written for this report. Run the coaching skill to add a headline, top habits and per-pull notes.")));
+      return;
+    }
+    if (coaching.headline) box.append(el("p", { class: "headline" }, coaching.headline));
+    const habits = el("div", { class: "habits" });
+    (coaching.habits || []).forEach((h, i) => {
+      const dl = el("dl", {});
+      for (const [k, label] of [["what", "You did"], ["instead", "Instead"], ["why", "Why"]]) {
+        if (h[k]) dl.append(el("dt", {}, label), el("dd", {}, h[k]));
+      }
+      habits.append(el("div", { class: "card habit" }, el("div", { class: "num" }, `Habit ${i + 1}`),
+        el("h3", {}, h.title || ""), dl, moments(h.moments)));
+    });
+    box.append(habits);
+    if (coaching.caveats && coaching.caveats.length) {
+      box.append(el("ul", { class: "caveats" }, ...coaching.caveats.map((c) => el("li", {}, c))));
+    }
+  }
+
+  // ---------- pull view ----------
+  let current = null, playerIdx = 0, highlight = null;
+
+  function renderTabs() {
+    const tabs = $("tabs");
+    tabs.replaceChildren();
+    for (const pull of pulls) {
+      tabs.append(el("button", {
+        type: "button", role: "tab", "aria-selected": String(current === pull.number),
+        onclick: () => selectPull(pull.number),
+      }, `#${pull.number} ${pull.boss} `, el("span", { class: "res" }, pull.result === "kill" ? "kill" : pull.result)));
+    }
+  }
+
+  function selectPull(number, t) {
+    current = number; highlight = t == null ? null : t;
+    renderTabs();
+    const pull = pulls.find((p) => p.number === number);
+    $("pull").replaceChildren(pullView(pull, false));
+  }
+
+  function jumpTo(number, t) {
+    selectPull(number, t);
+    history.replaceState(null, "", `#pull-${number}@${t}`);
+    $("pull").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function pullView(pull, printing) {
+    const wrap = el("div", { class: printing ? "pull-print" : "" });
+    if (printing) wrap.append(el("h2", {}, `#${pull.number} ${pull.label}`));
+    const note = coaching && coaching.pulls && coaching.pulls[String(pull.number)];
+    if (note) wrap.append(el("p", { class: "pull-note" }, note));
+    if (pull.players.length > 1 && !printing) {
+      const sw = el("div", { class: "tabs" });
+      pull.players.forEach((p, i) => sw.append(el("button", {
+        type: "button", "aria-selected": String(i === playerIdx),
+        onclick: () => { playerIdx = i; selectPull(pull.number, highlight); },
+      }, short(p.name))));
+      wrap.append(sw);
+    }
+    const players = printing ? pull.players : [pull.players[Math.min(playerIdx, pull.players.length - 1)]];
+    for (const p of players) {
+      if (printing && pull.players.length > 1) wrap.append(el("h3", {}, short(p.name)));
+      wrap.append(pullTiles(p), timeline(pull, p, printing), pullDetails(pull, p));
+    }
+    return wrap;
+  }
+
+  function pullTiles(p) {
+    const c = p.spec_checks;
+    const t = el("div", { class: "tiles" },
+      tile("Idle time", `${pct(p.idle.total, p.time_alive)}%`, `${p.idle.total.toFixed(1)}s` +
+        (p.died_at != null ? ` · died at ${fmt(p.died_at)}` : "")),
+      tile("Casts per minute", p.casts_per_minute == null ? "-" : p.casts_per_minute.toFixed(0)));
+    if (c) {
+      t.prepend(tile("Priority match", `${pct(c.priority.matched, c.priority.total)}%`,
+        `${c.priority.matched} of ${c.priority.total} casts`));
+      t.append(tile("Clearcasting wasted", String(c.clearcasting.wasted.filter((w) => !w.in_soul).length),
+        `outside Soul · ${c.clearcasting.wasted.filter((w) => w.in_soul).length} in Soul`));
+      for (const cd of c.cooldowns) {
+        t.append(tile(cd.spell, `${cd.uses.length}/${cd.possible}`,
+          cd.held_past_cooldown.length ? `held ${cd.held_past_cooldown.map((d) => d.toFixed(0) + "s").join(", ")}`
+            : cd.uses.length ? `first at ${fmt(cd.uses[0])}` : "not used"));
+      }
+    } else {
+      t.prepend(tile("Build", p.build.spec_name || "unknown", "spec coaching unavailable"));
+    }
+    return t;
+  }
+
+  // Step value of a [[t, n], ...] series at time t (0 before the first point).
+  function stepAt(points, t) {
+    let v = 0;
+    for (const [pt, n] of points || []) { if (pt > t) break; v = n; }
+    return v;
+  }
+
+  function timeline(pull, p, printing) {
+    const box = el("div", { class: "card chart-wrap", style: "margin-top:12px" });
+    box.append(el("h3", {}, "Timeline"));
+    const W = Math.max(320, (printing ? 1000 : ($("pull").clientWidth || 1000)) - 34);
+    const L = Math.min(132, W * 0.28), R = 12, T = 8;
+    const end = Math.max(p.time_alive, 1), x = (t) => L + ((W - L - R) * t) / end;
+    const c = p.spec_checks;
+    const castRows = ROTATION.filter((s) => p.abilities[s]);
+    const rowH = 18, castTop = T, castH = castRows.length * rowH + rowH;  // + a "Cooldowns & other" row
+    const salvoTop = castTop + castH + 16, salvoH = 52;
+    const ccTop = salvoTop + salvoH + 16, ccH = 36;
+    const winTop = ccTop + ccH + 16, winH = WINDOWS.length * 16;
+    const axisY = winTop + winH + 8, H = axisY + 22;
+    const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+      "aria-label": `Cast timeline for ${pull.boss}` });
+
+    // idle gaps behind everything
+    for (const g of p.idle.gaps) {
+      const r = svg("rect", { x: x(g.t), y: T, width: Math.max(1, x(g.t + g.duration) - x(g.t)),
+        height: axisY - T, fill: "--wash" });
+      r.dataset.tip = JSON.stringify({ t: g.t, idle: g.duration });
+      s.append(r);
+    }
+    // x axis
+    // tick spacing: the smallest of 15s/30s/60s/120s that keeps labels at least ~56px apart
+    const step = [15, 30, 60, 120].find((st) => ((W - L - R) * st) / end >= 56) || 120;
+    for (let t = 0; t <= end; t += step) {
+      s.append(svg("line", { x1: x(t), x2: x(t), y1: T, y2: axisY, stroke: "--grid", "stroke-width": 1 }));
+      const lab = svg("text", { x: x(t), y: axisY + 15, "text-anchor": "middle" });
+      lab.textContent = `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`;
+      s.append(lab);
+    }
+    s.append(svg("line", { x1: L, x2: W - R, y1: axisY, y2: axisY, stroke: "--axis", "stroke-width": 1 }));
+
+    const label = (text, y) => { const n = svg("text", { x: 0, y, class: "lane-label", "dominant-baseline": "middle" });
+      n.textContent = text; s.append(n); };
+
+    // casts: one row per rotational spell, then everything else
+    const rowOf = (spell) => { const i = castRows.indexOf(spell); return i < 0 ? castRows.length : i; };
+    castRows.forEach((sp, i) => label(sp.replace("Arcane ", ""), castTop + i * rowH + rowH / 2));
+    label("Other", castTop + castRows.length * rowH + rowH / 2);
+    const marks = [];
+    p.timeline.forEach((e, i) => {
+      const cy = castTop + rowOf(e.spell) * rowH + rowH / 2, cx = x(e.t);
+      let m;
+      if (e.matched === false) {
+        m = svg("path", { d: `M${cx - 4},${cy - 4}L${cx + 4},${cy + 4}M${cx - 4},${cy + 4}L${cx + 4},${cy - 4}`,
+          stroke: "--critical", "stroke-width": 2.5, "stroke-linecap": "round" });
+      } else {
+        m = svg("circle", { cx, cy, r: e.matched === true ? 4 : 3, fill: e.matched === true ? "--muted" : "--axis",
+          stroke: "--surface", "stroke-width": 2 });
+      }
+      s.append(m);
+      marks.push({ i, x: cx });
+    });
+
+    // Arcane Salvo (0-25) with the 12-stack threshold
+    const sy = (n) => salvoTop + salvoH - (salvoH * n) / 25;
+    label("Arcane Salvo", salvoTop + salvoH / 2);
+    s.append(svg("line", { x1: L, x2: W - R, y1: sy(12), y2: sy(12), stroke: "--axis", "stroke-width": 1 }));
+    const t12 = svg("text", { x: L + 3, y: sy(12) - 3 }); t12.textContent = "12"; s.append(t12);
+    s.append(svg("line", { x1: L, x2: W - R, y1: sy(0), y2: sy(0), stroke: "--grid", "stroke-width": 1 }));
+    s.append(stepPath(p.series.salvo, x, sy, end, "--s1"));
+
+    // Clearcasting (0-3) and wasted procs
+    const cy3 = (n) => ccTop + ccH - (ccH * n) / 3;
+    label("Clearcasting", ccTop + ccH / 2);
+    s.append(svg("line", { x1: L, x2: W - R, y1: cy3(0), y2: cy3(0), stroke: "--grid", "stroke-width": 1 }));
+    s.append(stepPath(p.series.clearcasting, x, cy3, end, "--s2"));
+    if (c) for (const w of c.clearcasting.wasted) {
+      const wx = x(w.t), wy = cy3(3);
+      s.append(svg("path", { d: `M${wx - 3.5},${wy - 3.5}L${wx + 3.5},${wy + 3.5}M${wx - 3.5},${wy + 3.5}L${wx + 3.5},${wy - 3.5}`,
+        stroke: w.in_soul ? "--muted" : "--critical", "stroke-width": 2, "stroke-linecap": "round" }));
+    }
+
+    // cooldown / buff windows
+    WINDOWS.forEach(([name, color], i) => {
+      const y = winTop + i * 16 + 3;
+      label(name, y + 5);
+      for (const w of (p.windows || {})[name] || []) {
+        s.append(svg("rect", { x: x(w.start), y, width: Math.max(2, x(w.end) - x(w.start)), height: 10, rx: 3,
+          fill: color }));
+      }
+    });
+
+    // persistent highlight from a coaching moment
+    if (highlight != null) {
+      s.append(svg("line", { x1: x(highlight), x2: x(highlight), y1: T, y2: axisY, stroke: "--ink", "stroke-width": 2 }));
+    }
+    // crosshair + tooltip
+    const cross = svg("line", { y1: T, y2: axisY, stroke: "--ink-2", "stroke-width": 1, visibility: "hidden" });
+    s.append(cross);
+    const hit = svg("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
+    s.append(hit);
+    box.append(s);
+
+    if (!printing) {
+      const tip = $("tip");
+      const show = (clientX, clientY) => {
+        const rect = s.getBoundingClientRect();
+        const px = ((clientX - rect.left) / rect.width) * W;
+        if (!marks.length) return;
+        let best = marks[0];
+        for (const m of marks) if (Math.abs(m.x - px) < Math.abs(best.x - px)) best = m;
+        const e = p.timeline[best.i];
+        cross.setAttribute("x1", best.x); cross.setAttribute("x2", best.x); cross.setAttribute("visibility", "visible");
+        tip.replaceChildren(tipBody(e, p));
+        tip.style.display = "block";
+        const host = document.documentElement.getBoundingClientRect();
+        let left = clientX - host.left + 14, top = clientY - host.top + 14;
+        if (left + tip.offsetWidth > window.scrollX + window.innerWidth - 8) left = clientX - host.left - tip.offsetWidth - 14;
+        tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+      };
+      hit.addEventListener("pointermove", (ev) => show(ev.clientX, ev.clientY));
+      hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
+      if (highlight != null) requestAnimationFrame(() => {
+        const rect = s.getBoundingClientRect();
+        show(rect.left + (x(highlight) / W) * rect.width, rect.top + castTop + 20);
+      });
+    }
+
+    const lg = el("div", { class: "legend" },
+      el("span", {}, el("i", { class: "mark-ok" }), "matched the priority"),
+      el("span", {}, el("b", { class: "mark-bad" }, "✕"), "differed from the priority / wasted proc"),
+      el("span", {}, el("i", { class: "sw", style: "background:var(--wash);outline:1px solid var(--ring)" }), "idle"),
+      ...WINDOWS.map(([n, col]) => el("span", {}, el("i", { class: "sw", style: `background:var(${col})` }), n)));
+    box.append(lg);
+    return box;
+  }
+
+  function stepPath(points, x, y, end, color) {
+    let d = "", prev = null;
+    for (const [t, n] of points || []) {
+      d += prev == null ? `M${x(t)},${y(n)}` : `H${x(t)}V${y(n)}`;
+      prev = n;
+    }
+    if (prev != null) d += `H${x(end)}`;
+    return svg("path", { d: d || "M0,0", fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round" });
+  }
+
+  function tipBody(e, p) {
+    const frag = el("div", {});
+    frag.append(el("div", { class: "t" }, `${fmt(e.t)}  ${e.spell}`));
+    if (e.matched === false) frag.append(el("div", {}, el("strong", {}, `Priority: ${e.expected}`), ` - ${e.reason}`));
+    else if (e.matched === true) frag.append(el("div", { class: "muted" }, "Matched the priority"));
+    const st = e.state;
+    const row = (k, v, color) => el("div", { class: "row" },
+      color ? el("i", { class: "key", style: `background:${color}` }) : null, el("strong", {}, String(v)), k);
+    frag.append(row("Arcane Salvo", st.salvo, "var(--s1)"), row("Clearcasting", st.clearcasting, "var(--s2)"),
+      row("Arcane Charges (approx.)", st.charges));
+    if (st.cumulative_power) frag.append(row("Cumulative Power", st.cumulative_power));
+    const up = WINDOWS.filter(([n]) => ((p.windows || {})[n] || []).some((w) => w.start <= e.t && e.t <= w.end));
+    if (up.length) frag.append(el("div", { class: "muted" }, `Up: ${up.map(([n]) => n).join(", ")}`));
+    return frag;
+  }
+
+  function pullDetails(pull, p) {
+    const cols = el("div", { class: "cols" });
+    const c = p.spec_checks;
+    const left = el("div", { class: "card" }, el("h3", {}, "Casts that differed from the priority"));
+    const rows = p.timeline.filter((e) => e.matched === false);
+    if (!c) left.append(el("p", { class: "empty" }, "Spec coaching only supports Arcane Sunfury with the Season 2 4-piece."));
+    else if (!rows.length) left.append(el("p", { class: "empty" }, "None - every rotational cast matched."));
+    else {
+      const tb = el("tbody", {});
+      const SHOWN = 12;
+      rows.forEach((e, i) => {
+        const tr = el("tr", { tabindex: "0", onclick: () => jumpTo(pull.number, e.t),
+          onkeydown: (ev) => { if (ev.key === "Enter") jumpTo(pull.number, e.t); } },
+          el("td", { class: "num" }, fmt(e.t)), el("td", {}, e.spell), el("td", {}, e.expected), el("td", {}, e.reason));
+        if (i >= SHOWN) tr.classList.add("extra");
+        tb.append(tr);
+      });
+      const table = el("table", { class: rows.length > SHOWN ? "collapsed" : "" }, el("thead", {}, el("tr", {},
+        el("th", {}, "Time"), el("th", {}, "Pressed"), el("th", {}, "Priority"), el("th", {}, "Why"))), tb);
+      left.append(el("div", { class: "scroll-x" }, table));
+      if (rows.length > SHOWN) {
+        const more = el("button", { type: "button", class: "no-print", style: "margin-top:8px",
+          onclick: () => { const open = table.classList.toggle("collapsed");
+            more.textContent = open ? `Show all ${rows.length}` : "Show fewer"; } }, `Show all ${rows.length}`);
+        left.append(more);
+      }
+    }
+    const right = el("div", { class: "card" }, el("h3", {}, "Ability usage"));
+    const ab = el("tbody", {});
+    for (const [sp, n] of Object.entries(p.abilities)) ab.append(el("tr", {}, el("td", { class: "num" }, n), el("td", {}, sp)));
+    right.append(el("table", {}, ab));
+    if (p.failed_casts.length) {
+      const fc = el("tbody", {});
+      for (const f of p.failed_casts) fc.append(el("tr", {}, el("td", { class: "num" }, `${f.count}x`),
+        el("td", {}, `${f.spell}: ${f.reason}`)));
+      right.append(el("details", {}, el("summary", {}, `Failed casts (${p.failed_casts.length})`), el("table", {}, fc)));
+    }
+    cols.append(left, right);
+    return cols;
+  }
+
+  // ---------- theme & print ----------
+  $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+  $("pdf").addEventListener("click", () => window.print());
+  window.addEventListener("beforeprint", () => {
+    $("print-pulls").replaceChildren(...pulls.map((pull) => pullView(pull, true)));
+  });
+  window.addEventListener("afterprint", () => $("print-pulls").replaceChildren());
+  let resizeTimer;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (current != null) selectPull(current, highlight); }, 150); });
+
+  renderSummary();
+  renderCoach();
+  // Deep link: #pull-4 or #pull-4@102.2 opens that pull (and moment).
+  const m = /^#pull-(\d+)(?:@([\d.]+))?$/.exec(location.hash);
+  if (m && pulls.some((p) => p.number === +m[1])) {
+    selectPull(+m[1], m[2] == null ? null : +m[2]);
+    requestAnimationFrame(() => $("pull").scrollIntoView({ block: "start" }));
+  } else if (pulls.length) selectPull(pulls[pulls.length - 1].number);
+})();
+</script>
+</body>
+</html>

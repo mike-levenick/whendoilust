@@ -24,7 +24,7 @@ jobs:
       # The analyzer is stdlib-only by design (it ships inside a skill that
       # runs on other people's machines), so there is nothing to install.
       - name: Compile
-        run: python -m py_compile wowlog.py
+        run: python -m py_compile wowlog.py report.py
 
       # Synthetic fixtures only — real combat logs are hundreds of MB and
       # never committed.
