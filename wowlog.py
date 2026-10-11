@@ -130,6 +130,7 @@ def analyze(enc, guid):
     salvo_capped_hits = 0              # Missiles hits landing while Arcane Salvo was already at 25
     windows = defaultdict(list)        # window name -> [[start, end or None]]
     open_span = {}                     # (spell, target) -> open [start, None] span; two lusts don't collide
+    window_spells = set()              # spells that already have a span (so a REMOVED isn't a pre-pull buff)
     series = defaultdict(list)         # SERIES key -> [(t, stacks)]
 
     for t, f in enc.events:
@@ -166,11 +167,13 @@ def analyze(enc, guid):
                 open_span.pop(key)[1] = t
             open_span[(spell, dst)] = [t, None]
             windows[window].append(open_span[(spell, dst)])
+            window_spells.add(spell)
         elif window and ev == "SPELL_AURA_REMOVED":
             if (spell, dst) in open_span:
                 open_span.pop((spell, dst))[1] = t
-            elif dst == guid and not windows[window]:  # buff already up when the pull started
+            elif dst == guid and spell not in window_spells:  # buff already up when the pull started
                 windows[window].append([t0, t])
+                window_spells.add(spell)
         if src != guid:
             continue
         if ev == "SPELL_CAST_START":
@@ -213,7 +216,8 @@ def analyze(enc, guid):
     idle = sum(g for _, g in gaps)
     # Clip to what was analysed: nothing after death (a battle res would otherwise draw past the chart).
     for name in list(windows):
-        windows[name] = [[a, min(b if b is not None else end, end)] for a, b in windows[name] if a < end]
+        spans = [[a, min(b if b is not None else end, end)] for a, b in windows[name] if a < end]
+        windows[name] = [[a, b] for a, b in spans if b > a]
         if not windows[name]:
             del windows[name]
     for key in list(series):

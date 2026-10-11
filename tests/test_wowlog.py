@@ -148,10 +148,11 @@ class Windows(LogTest):
             (24.0, touch("SPELL_AURA_REMOVED", target=boss2)),
             (15.0, touch("SPELL_AURA_APPLIED", src=other_mage)),     # someone else's Touch: not ours
             (30.0, aura("Arcane Soul", 451038)), (34.0, removed(aura("Arcane Soul", 451038))),
+            (36.0, removed(aura("Fury of the Aspects", 390386))),   # also up before the pull, though Lust has spans now
         ])
         p = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
         self.assertEqual(p["windows"]["Lust"], [{"start": 0.0, "end": 3.0}, {"start": 5.0, "end": 9.0},
-                                                {"start": 6.0, "end": 20.0}])
+                                                {"start": 6.0, "end": 20.0}, {"start": 0.0, "end": 36.0}])
         self.assertEqual(p["windows"]["Touch of the Magi"], [{"start": 10.0, "end": 12.0}, {"start": 12.0, "end": 24.0}])
         self.assertEqual(p["windows"]["Arcane Soul"], [{"start": 30.0, "end": 34.0}])
 
