@@ -128,6 +128,10 @@ def analyze(enc, guid):
                 stacks[spell] = int(f[-1])
             elif ev == "SPELL_AURA_REMOVED":
                 stacks[spell] = 0
+            elif ev == "SPELL_AURA_REFRESH":
+                # A REFRESH also accompanies every stack change (same timestamp); only a lone one at cap is a wasted gain
+                if spell == "Clearcasting" and stacks[spell] >= CLEARCASTING_MAX and not (auras[spell] and auras[spell][-1][0] == t):
+                    ev = "CAPPED"
             auras[spell].append((t, ev))
         if src != guid:
             continue
@@ -261,8 +265,8 @@ def report_arcane_sunfury(r, t0):
         elif e == "SPELL_AURA_REMOVED" and soul_spans:
             soul_spans[-1][1] = t + 0.5
     in_soul = lambda t: any(a <= t <= b for a, b in soul_spans)
-    gained = sum(1 for _, e in cc_events if e in ("SPELL_AURA_APPLIED", "SPELL_AURA_APPLIED_DOSE"))
-    capped = [t for t, e in cc_events if e == "SPELL_AURA_REFRESH"]
+    gained = sum(1 for _, e in cc_events if e in ("SPELL_AURA_APPLIED", "SPELL_AURA_APPLIED_DOSE", "CAPPED"))
+    capped = [t for t, e in cc_events if e == "CAPPED"]
     capped_soul = sum(1 for t in capped if in_soul(t))
     out.append(f"  Clearcasting: {gained} gained, {len(capped)} wasted at {CLEARCASTING_MAX} stacks "
                f"({len(capped) - capped_soul} outside Arcane Soul, {capped_soul} during/just after Soul)")

@@ -18,7 +18,7 @@ Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest
 
 ## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources
 - Sources: SimC APL `ActionPriorityLists/default/mage_arcane.simc` on the `midnight` branch (generated 2026-09-06); Method.gg Arcane 12.1 guide (updated 2026-09-13). Icy Veins blocks fetches; Wowhead guide bodies don't render via fetch, but spell pages do.
-- Clearcasting max 3 stacks; gaining at cap logs SPELL_AURA_REFRESH (= wasted proc).
+- Clearcasting max 3 stacks; gaining at cap logs a lone SPELL_AURA_REFRESH (= wasted proc). A REFRESH is also logged at the same timestamp as every APPLIED_DOSE/REMOVED_DOSE — those are not waste.
 - Arcane Salvo max 25, +3% Barrage damage per stack; Missiles builds it, Barrage consumes it. Gains at 25 are silent (no event).
 - Arcane Soul (Sunfury, after the phoenix): ~4s; each Barrage during it gives +5 Salvo and +1 Clearcasting and does not consume Salvo. Barrage spam; CC capping inside Soul is expected.
 - Cumulative Power (4pc): builds to 8 during a Missiles channel, expires ~2.5s after; consumed by Prismatic Bolt. "Prismatic Bolt!" aura = Bolt available.
