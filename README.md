@@ -5,10 +5,23 @@ from World of Warcraft advanced combat logs. It replays every cast against the
 SimulationCraft priority list and reports wasted procs, downtime, cooldown
 timing, and where your button presses differed from the priority.
 
-> Work in progress. The goal is a Claude Code skill that analyzes your log,
-> writes human-friendly coaching, and produces a self-contained HTML report
-> you can share or save as PDF. See the
+> Work in progress; see the
 > [v1 milestone](https://github.com/mike-levenick/whendoilust/milestone/1).
+
+## Use it as a Claude Code skill
+
+The repo includes an `arcane-coach` skill: ask Claude Code to "check my last pull" or "coach tonight's key"
+and it analyzes your newest log, writes coaching, and opens a self-contained HTML report (shareable, and
+printable to PDF). Reports are saved under `~/Documents/whendoilust-reports/` (override with
+`$WHENDOILUST_REPORTS`).
+
+```
+git clone https://github.com/mike-levenick/whendoilust.git
+ln -s "$PWD/whendoilust/.claude/skills/coach" ~/.claude/skills/arcane-coach   # use it from any folder
+```
+
+(Or just run Claude Code inside the clone; the skill is picked up there automatically.) On Windows, create
+the link with `mklink /D` or copy the folder path into your skills directory.
 
 ## Requirements
 
