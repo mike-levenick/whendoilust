@@ -14,7 +14,12 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 
-LOG_DIR = "/Applications/World of Warcraft/_retail_/Logs"
+# Default retail log folders, macOS then Windows. Override with --log-dir or $WOWLOG_DIR.
+LOG_DIRS = [
+    "/Applications/World of Warcraft/_retail_/Logs",
+    r"C:\Program Files (x86)\World of Warcraft\_retail_\Logs",
+    r"C:\Program Files\World of Warcraft\_retail_\Logs",
+]
 MINE_FLAG = 0x511  # affiliation mine + reaction friendly + controlled by player + type player
 GCD = 1.5          # base GCD; haste shrinks it, so gaps above this are a conservative "idle" measure
 IDLE_THRESHOLD = 2.0
@@ -423,11 +428,16 @@ def log_started(path):
     return datetime.strptime(m.group(1), "%m%d%y_%H%M%S") if m else datetime.fromtimestamp(os.path.getmtime(path))
 
 
-def newest_log():
-    # Also finds logs the Archon app moved to Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt
-    logs = glob.glob(os.path.join(LOG_DIR, "**", "*WoWCombatLog*.txt"), recursive=True)
+def newest_log(log_dir=None):
+    """Newest combat log, also finding ones the Archon app moved to Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt."""
+    override = log_dir or os.environ.get("WOWLOG_DIR")
+    dirs = [os.path.expanduser(override)] if override else LOG_DIRS
+    # escape: a folder like "D:\WoW [PTR]\Logs" must not be read as a glob pattern
+    logs = [p for d in dirs for p in glob.glob(os.path.join(glob.escape(d), "**", "*WoWCombatLog*.txt"), recursive=True)]
     if not logs:
-        raise SystemExit(f"No combat logs found under {LOG_DIR}")
+        looked = [d if os.path.isdir(d) else f"{d} (does not exist)" for d in dirs]
+        raise SystemExit("No combat logs found. Looked in:\n  " + "\n  ".join(looked) +
+                         "\nPass a log file, or the folder with --log-dir (or set WOWLOG_DIR).")
     return max(logs, key=log_started)
 
 
@@ -441,8 +451,9 @@ def main():
     ap.add_argument("--pull", type=int, action="append", help="only report pull number N (see --list); repeatable")
     ap.add_argument("--compare", action="append", default=[], help="also report this player, e.g. a same-spec raider")
     ap.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
+    ap.add_argument("--log-dir", help="folder to search for the newest log (default: the standard retail Logs folder)")
     args = ap.parse_args()
-    path = args.logfile or newest_log()
+    path = args.logfile or newest_log(args.log_dir)
     players = [find_player(path, args.player)] + [find_player(path, n) for n in args.compare]
     numbered = list(enumerate((e for e in split_encounters(path) if e.duration > 5), 1))
     if args.list:

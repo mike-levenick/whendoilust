@@ -10,13 +10,14 @@ Personal tool for improving the user's Arcane Mage rotation from WoW advanced co
 ## Running
 ```
 python3 wowlog.py --list                       # numbered pulls in the newest log
-python3 wowlog.py --last --compare Zaffira     # most recent pull
+python3 wowlog.py --last                       # most recent pull
+python3 wowlog.py --last --compare Zaffira     # ...plus another player in the same log
 python3 wowlog.py --pull 13                    # a specific pull
 python3 wowlog.py --boss Sentinels             # all pulls of a boss
 python3 wowlog.py --last --json                # same report as JSON (schema 1), for the dashboard
 ```
 JSON: `{schema, log, log_started, pulls: [{number, boss, difficulty, result, start, duration, players: [{name, idle, abilities, failed_casts, spec_checks, timeline}]}]}`. Times are seconds from pull start. `timeline` has every cast with its state (charges, salvo, clearcasting, arcane_soul, cumulative_power, prismatic_bolt) and, for rotational casts, `expected`/`reason`/`matched` against the SimC priority. The text report is rendered from the same data (`summarize` → `print_report`).
-Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest by the date in the filename is used by default; pass a path to override). The Archon uploader archives logs untouched for 3 days into `Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt` (uncompressed, but mtime reset), and the script searches there too. Safe to run while the game is still logging. "Check last pull" from the user means run `--last --compare Zaffira` and summarize the rotation findings.
+Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` on macOS, `C:\Program Files (x86)\World of Warcraft\_retail_\Logs` on Windows; `--log-dir` / `$WOWLOG_DIR` override (newest by the date in the filename is used by default; pass a path to override). The Archon uploader archives logs untouched for 3 days into `Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt` (uncompressed, but mtime reset), and the script searches there too. Safe to run while the game is still logging. "Check last pull" from the user means run `--last` and summarize the rotation findings; add `--compare Zaffira` only when Zaffira is in the log (they're absent from most runs, so nothing should be built specifically for them).
 
 ## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources
 - Sources: SimC APL `ActionPriorityLists/default/mage_arcane.simc` on the `midnight` branch (generated 2026-09-06); Method.gg Arcane 12.1 guide (updated 2026-09-13). Icy Veins blocks fetches; Wowhead guide bodies don't render via fetch, but spell pages do.

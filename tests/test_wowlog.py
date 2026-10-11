@@ -84,17 +84,66 @@ class Output(LogTest):
 
 
 class NewestLog(unittest.TestCase):
+    def setUp(self):
+        # Hermetic: a WOWLOG_DIR on the developer's or CI machine must not leak in.
+        env = mock.patch.dict(os.environ, {}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def folder_with_log(self, name, log="WoWCombatLog-101026_192927.txt"):
+        d = os.path.join(self.tmp.name, name)
+        os.makedirs(d)
+        path = os.path.join(d, log)
+        open(path, "w").close()
+        return d, path
+
     def test_archived_logs_are_found_and_ordered_by_filename_date(self):
-        with tempfile.TemporaryDirectory() as d:
-            archive = os.path.join(d, "warcraftlogsarchive")
-            os.mkdir(archive)
-            older = os.path.join(archive, "Archive-WoWCombatLog-100926_210706.txt")
-            newer = os.path.join(archive, "Archive-WoWCombatLog-101026_192927.txt")
-            for p in (newer, older):  # archiving resets mtime, so the older log is touched last
-                open(p, "w").close()
-            os.utime(older, (2e9, 2e9))
-            with mock.patch.object(wowlog, "LOG_DIR", d):
-                self.assertEqual(wowlog.newest_log(), newer)
+        d = self.tmp.name
+        archive = os.path.join(d, "warcraftlogsarchive")
+        os.mkdir(archive)
+        older = os.path.join(archive, "Archive-WoWCombatLog-100926_210706.txt")
+        newer = os.path.join(archive, "Archive-WoWCombatLog-101026_192927.txt")
+        for p in (newer, older):  # archiving resets mtime, so the older log is touched last
+            open(p, "w").close()
+        os.utime(older, (2e9, 2e9))
+        with mock.patch.object(wowlog, "LOG_DIRS", [os.path.join(d, "missing"), d]):
+            self.assertEqual(wowlog.newest_log(), newer)
+
+    def test_flag_beats_env_beats_defaults(self):
+        flag_dir, flag_log = self.folder_with_log("flag")
+        env_dir, env_log = self.folder_with_log("env")
+        default_dir, _ = self.folder_with_log("default")
+        with mock.patch.object(wowlog, "LOG_DIRS", [default_dir]):
+            os.environ["WOWLOG_DIR"] = env_dir
+            self.assertEqual(wowlog.newest_log(flag_dir), flag_log)
+            self.assertEqual(wowlog.newest_log(), env_log)
+
+    def test_cli_log_dir_flag_is_used(self):
+        flag_dir, flag_log = self.folder_with_log("flag")
+        write_log(flag_log, [(1.000, cc("SPELL_AURA_APPLIED"))])
+        with mock.patch.object(wowlog, "newest_log", return_value=flag_log) as newest, \
+                mock.patch.object(sys, "argv", ["wowlog.py", "--log-dir", flag_dir, "--list"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            wowlog.main()
+        newest.assert_called_once_with(flag_dir)
+
+    def test_folder_names_are_not_glob_patterns(self):
+        d, log = self.folder_with_log("WoW [PTR]")
+        self.assertEqual(wowlog.newest_log(d), log)
+
+    def test_no_logs_lists_every_folder_searched(self):
+        empty = os.path.join(self.tmp.name, "empty")
+        os.mkdir(empty)
+        missing = os.path.join(self.tmp.name, "missing")
+        with mock.patch.object(wowlog, "LOG_DIRS", [empty, missing]), self.assertRaises(SystemExit) as err:
+            wowlog.newest_log()
+        msg = str(err.exception)
+        self.assertIn(f"{empty}\n", msg)
+        self.assertIn(f"{missing} (does not exist)", msg)
+        self.assertIn("--log-dir", msg)
+        self.assertIn("WOWLOG_DIR", msg)
 
 
 if __name__ == "__main__":
