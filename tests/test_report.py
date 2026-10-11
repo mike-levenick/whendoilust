@@ -112,6 +112,44 @@ class SelfContained(unittest.TestCase):
         self.assertNotRegex(page, r"\{\{(TITLE|REPORT|COACHING)\}\}")
 
 
+class CoachingCheck(unittest.TestCase):
+    def test_grounded_coaching_passes(self):
+        self.assertEqual(report.check_coaching(real_report(), coaching()), [])
+        self.assertEqual(report.check_coaching(real_report(), None), [])
+
+    def test_ungrounded_coaching_is_flagged(self):
+        bad = coaching()
+        bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}, {"pull": 9, "t": 4.0}, {"pull": 1}]
+        bad["habits"] *= 4
+        bad["pulls"] = {"1": "ok", "7": "no such pull"}
+        problems = report.check_coaching(real_report(), bad)
+        self.assertIn("4 habits; the report shows the top 3 only", problems)
+        self.assertIn("habit 1: pull #1 has no cast within 0.5s of t=30.0", problems)
+        self.assertIn("habit 1: no pull #9 in this report", problems)
+        self.assertIn("habit 1: pull #1 has no cast within 0.5s of t=None", problems)
+        self.assertIn("pull note for #7, which isn't in this report", problems)
+
+    def test_habits_for_an_unsupported_build_are_flagged(self):
+        r = real_report()
+        r["pulls"][0]["players"][0]["build"]["supported"] = False
+        self.assertIn("habits written for a build without spec coaching (build.supported is false everywhere)",
+                      report.check_coaching(r, coaching()))
+
+    def test_strict_cli_fails_on_ungrounded_coaching(self):
+        with tempfile.TemporaryDirectory() as d:
+            rp, cp = os.path.join(d, "r.json"), os.path.join(d, "c.json")
+            json.dump(real_report(), open(rp, "w"))
+            bad = coaching()
+            bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
+            json.dump(bad, open(cp, "w"))
+            argv = ["report.py", rp, "--coaching", cp, "-o", os.path.join(d, "r.html"), "--strict"]
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit):
+                report.main()
+            self.assertIn("no cast within 0.5s", err.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(d, "r.html")))
+
+
 class Cli(unittest.TestCase):
     def test_reads_stdin_and_writes_the_output_file(self):
         with tempfile.TemporaryDirectory() as d:
