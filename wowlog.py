@@ -8,6 +8,7 @@ import argparse
 import csv
 import glob
 import os
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 
@@ -333,6 +334,20 @@ def report(enc, guid, name):
             print(f"    {n}x {spell}: {why}")
 
 
+def log_started(path):
+    """Session start from the name (WoWCombatLog-MMDDYY_HHMMSS.txt); the Archon app's archive resets mtime."""
+    m = re.search(r"WoWCombatLog-(\d{6}_\d{6})\.txt$", path)
+    return datetime.strptime(m.group(1), "%m%d%y_%H%M%S") if m else datetime.fromtimestamp(os.path.getmtime(path))
+
+
+def newest_log():
+    # Also finds logs the Archon app moved to Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt
+    logs = glob.glob(os.path.join(LOG_DIR, "**", "*WoWCombatLog*.txt"), recursive=True)
+    if not logs:
+        raise SystemExit(f"No combat logs found under {LOG_DIR}")
+    return max(logs, key=log_started)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("logfile", nargs="?")
@@ -343,7 +358,7 @@ def main():
     ap.add_argument("--pull", type=int, action="append", help="only report pull number N (see --list); repeatable")
     ap.add_argument("--compare", action="append", default=[], help="also report this player, e.g. a same-spec raider")
     args = ap.parse_args()
-    path = args.logfile or max(glob.glob(os.path.join(LOG_DIR, "WoWCombatLog*.txt")), key=os.path.getmtime)
+    path = args.logfile or newest_log()
     players = [find_player(path, args.player)] + [find_player(path, n) for n in args.compare]
     print(f"Log: {os.path.basename(path)}")
     encounters = [e for e in split_encounters(path) if e.duration > 5]

@@ -14,7 +14,7 @@ python3 wowlog.py --last --compare Zaffira     # most recent pull
 python3 wowlog.py --pull 13                    # a specific pull
 python3 wowlog.py --boss Sentinels             # all pulls of a boss
 ```
-Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest is used by default; pass a path to override). Safe to run while the game is still logging. "Check last pull" from the user means run `--last --compare Zaffira` and summarize the rotation findings.
+Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest by the date in the filename is used by default; pass a path to override). The Archon uploader archives logs untouched for 3 days into `Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt` (uncompressed, but mtime reset), and the script searches there too. Safe to run while the game is still logging. "Check last pull" from the user means run `--last --compare Zaffira` and summarize the rotation findings.
 
 ## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources
 - Sources: SimC APL `ActionPriorityLists/default/mage_arcane.simc` on the `midnight` branch (generated 2026-09-06); Method.gg Arcane 12.1 guide (updated 2026-09-13). Icy Veins blocks fetches; Wowhead guide bodies don't render via fetch, but spell pages do.
