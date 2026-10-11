@@ -25,7 +25,9 @@ def embed(obj):
     return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-TOLERANCE = 0.5  # seconds between a coaching moment and the report time it cites
+# Seconds between a coaching moment and the report time it cites. Times are copied verbatim from the JSON
+# (millisecond precision), so this only absorbs rounding; at 0.5s, half of random times on a busy pull passed.
+TOLERANCE = 0.05
 
 
 def anchor_times(player):
@@ -44,7 +46,12 @@ def anchor_times(player):
 
 
 def is_number(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v  # v == v: not NaN
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return float(v) == float(v)  # not NaN, and not an int too large for a float
+    except OverflowError:
+        return False
 
 
 def check_coaching(report, coaching):
@@ -99,7 +106,7 @@ def check_coaching(report, coaching):
         problems.append("pulls must be an object keyed by pull number")
         notes = {}
     for key in notes:
-        if not (str(key).isascii() and str(key).isdigit() and int(key) in pulls):
+        if not (str(key).isascii() and str(key).isdigit() and str(int(key)) == str(key) and int(key) in pulls):
             problems.append(f"pull note for #{key}, which isn't in this report")
     for key in ("headline",):
         if key in coaching and not isinstance(coaching[key], str):
@@ -131,6 +138,13 @@ def load(path, what):
         raise SystemExit(f"Couldn't read the {what} file {path}: {e}")
 
 
+def load_report(path):
+    r = load(path, "report")
+    if not (isinstance(r, dict) and isinstance(r.get("pulls"), list)):
+        raise SystemExit(f"{path} isn't a wowlog.py --json report")
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("report", help="output of wowlog.py --json ('-' for stdin)")
@@ -139,9 +153,12 @@ def main():
     ap.add_argument("--strict", action="store_true", help="fail instead of warn when the coaching doesn't match the report")
     ap.add_argument("--text", action="store_true", help="print the text report for REPORT.json instead of rendering HTML")
     args = ap.parse_args()
-    report = load(args.report, "report")
-    if args.text:
-        for pull in report["pulls"]:  # the same text report wowlog.py prints, from this exact JSON
+    report = load_report(args.report)
+    if args.text:  # the same text report wowlog.py prints, from this exact JSON
+        print(f"Log: {report.get('log', '?')}")
+        if not report["pulls"]:
+            print("No boss encounters in this log yet.")
+        for pull in report["pulls"]:
             for p in pull["players"]:
                 wowlog.print_report(pull["label"], p)
         return

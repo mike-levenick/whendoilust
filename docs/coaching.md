@@ -27,7 +27,9 @@ report (see `check_coaching`).
 - `habits`: **up to the top 3** across the session, ranked by how much they'd gain; fewer only when there
   genuinely aren't three. `moments` are 2-3 example timestamps: `pull` = the pull `number`, `t` = seconds
   from pull start copied from the report (a `timeline` cast, a `spec_checks` time such as a wasted proc or a
-  Soul window, a `windows` start, an idle gap). `--strict` requires something in that pull within 0.5s.
+  Soul window, a `windows` start, an idle gap). Copy times exactly; `--strict` requires something in that
+  pull within 0.05s. That is a sanity check (right pull, real time, right player), not proof the moment
+  shows what the habit says, so pick moments that genuinely do.
   `player` (a name prefix) is only for moments about a comparison player; the default is the main player.
   Moments must be in pulls whose `build.supported` is true. Each renders as a chip that jumps there.
 - `pulls`: keyed by pull number as a string. One or two sentences each; skip a pull rather than pad.

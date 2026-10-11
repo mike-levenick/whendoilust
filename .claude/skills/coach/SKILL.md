@@ -19,7 +19,10 @@ The skill may be installed by symlink or by copying its folder, so find the chec
 walking up from the skill's real location (no git needed). Use whichever Python is installed:
 
 ```bash
-PY=$(command -v python3 || command -v python || command -v py)
+# First interpreter that is real Python 3.9+ (skips the Windows Store and macOS Xcode stubs)
+PY=""; for c in python3 python py; do
+  command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null && { PY=$c; break; }
+done
 REPO=$("$PY" -c '
 import os, sys
 d = os.path.dirname(os.path.realpath(sys.argv[1]))
@@ -28,7 +31,9 @@ while d != os.path.dirname(d) and not os.path.exists(os.path.join(d, "wowlog.py"
 print(d if os.path.exists(os.path.join(d, "wowlog.py")) else "")' "<this skill's base directory>/SKILL.md")
 ```
 
-- No Python: tell the user to install Python 3.9+ (python.org); never install packages.
+(Write the base directory with forward slashes, also on Windows.)
+
+- `PY` empty: tell the user to install Python 3.9+ (python.org); never install packages.
 - `REPO` empty: the skill was copied away from its `whendoilust` checkout. Tell the user to install it as
   the README says (clone, then symlink `.claude/skills/coach` into `~/.claude/skills/arcane-coach`).
 
@@ -68,7 +73,8 @@ BASE="$OUT/<name>"
 "$PY" "$REPO/report.py" "$BASE.json" --text > "$BASE.txt"     # same data, readable; made from the JSON
 ```
 
-Read `$BASE.txt` for the overview. Pull exact timestamps, Salvo values and counts from the JSON with short
+If `$BASE.txt` says "No boss encounters", the selection matched nothing: say so and stop. Otherwise read
+`$BASE.txt` for the overview. Pull exact timestamps, Salvo values and counts from the JSON with short
 `"$PY" -c` one-liners rather than reading the whole file (a raid night is over 1 MB).
 
 **Build gate.** Spec coaching depends on each pull's `players[0].build.supported`:
@@ -85,7 +91,7 @@ Read `$REPO/docs/coaching.md` and follow its format and writing rules exactly. T
 - A one or two sentence `headline`: the overall verdict and the biggest lever.
 - **Up to 3 habits** across the selected pulls, ranked by how much they'd gain; fewer if there genuinely
   aren't three, never padded. Each has `what` (with the real numbers), `instead`, `why` (the mechanic), and
-  2-3 `moments`: `pull` = the pull number, `t` = a time copied from the JSON (a cast, a wasted proc, a Soul
+  2-3 `moments`: `pull` = the pull number, `t` = a time copied exactly from the JSON (a cast, a wasted proc, a Soul
   window, an idle gap, a cooldown use). Add `"player": "Name"` for a moment about the comparison player.
 - One or two sentences per pull in `pulls`, skipping pulls with nothing to say.
 - `caveats` wherever a flagged cast may be correct: the analyzer assumes one target, so "Barrage, priority
@@ -101,7 +107,7 @@ Write it to `$BASE.coaching.json`.
 "$PY" "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict
 ```
 
-`--strict` prints every `coaching:` problem and fails: a moment with nothing at that time in that pull, a
+`--strict` prints every `coaching:` problem and fails: a moment with nothing within 0.05s in that pull, a
 note for a pull that isn't in the report, a moment in a pull without spec coaching, more than 3 habits, or
 a wrongly shaped file. Fix the coaching and re-run until it passes; never drop `--strict` to get past it,
 and never move a moment to an unrelated time just to pass.

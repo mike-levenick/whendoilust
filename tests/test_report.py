@@ -124,14 +124,15 @@ class CoachingCheck(unittest.TestCase):
         bad["pulls"] = {"1": "ok", "7": "no such pull"}
         problems = report.check_coaching(real_report(), bad)
         self.assertIn("4 habits; the report shows the top 3 only", problems)
-        self.assertIn("habit 1: nothing in pull #1 within 0.5s of t=30.0", problems)
+        self.assertIn("habit 1: nothing in pull #1 within 0.05s of t=30.0", problems)
         self.assertIn("habit 1: no pull #9 in this report", problems)
-        self.assertIn("habit 1: nothing in pull #1 within 0.5s of t=None", problems)
+        self.assertIn("habit 1: nothing in pull #1 within 0.05s of t=None", problems)
         self.assertIn("pull note for #7, which isn't in this report", problems)
 
     def test_tolerance_boundary_and_types(self):
         # The fixture's Barrage is at exactly 4.0s, and nothing else is within 0.6s of it.
-        cases = ((4.5, True), (3.5, True), (4.51, False), (True, False), ("4", False), (float("nan"), False))
+        cases = ((4.0, True), (4.05, True), (3.95, True), (4.06, False), (4.5, False), (True, False), ("4", False),
+                 (float("nan"), False), (10 ** 400, False))
         for t, ok in cases:
             with self.subTest(t=t):
                 c = coaching()
@@ -157,7 +158,7 @@ class CoachingCheck(unittest.TestCase):
         c["habits"][0]["moments"] = [{"pull": 1, "t": 50.0, "player": "Zaffira"}]
         self.assertEqual(report.check_coaching(r, c), [])
         c["habits"][0]["moments"] = [{"pull": 1, "t": 50.0}]  # not one of the main player's times
-        self.assertEqual(report.check_coaching(r, c), ["habit 1: nothing in pull #1 within 0.5s of t=50.0"])
+        self.assertEqual(report.check_coaching(r, c), ["habit 1: nothing in pull #1 within 0.05s of t=50.0"])
         c["habits"][0]["moments"] = [{"pull": 1, "t": 4.0, "player": "Nobody"}]
         self.assertEqual(report.check_coaching(r, c), ["habit 1: no player 'Nobody' in pull #1"])
         r["pulls"][0]["players"][0]["build"].update(supported=False, unsupported_reason="no_4pc")
@@ -178,7 +179,8 @@ class CoachingCheck(unittest.TestCase):
             "pull a list": {"habits": [{"moments": [{"pull": [1], "t": 4.0}]}]},
             "pull a bool": {"habits": [{"moments": [{"pull": True, "t": 4.0}]}]},
             "pulls a list": {"pulls": [1]}, "pulls a string": {"pulls": "ab"},
-            "unicode digit key": {"pulls": {"\u00b2": "x"}}, "headline a list": {"headline": ["x"]},
+            "unicode digit key": {"pulls": {"\u00b2": "x"}}, "zero-padded key": {"pulls": {"01": "x"}},
+            "headline a list": {"headline": ["x"]},
             "caveats a string": {"caveats": "x"},
         }
         for name, c in shapes.items():
@@ -213,7 +215,7 @@ class CoachingCheck(unittest.TestCase):
         bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
         code, err, wrote = self.run_main(bad, "--strict")
         self.assertEqual((code, wrote), (1, False))
-        self.assertIn("coaching: habit 1: nothing in pull #1 within 0.5s of t=30.0", err)
+        self.assertIn("coaching: habit 1: nothing in pull #1 within 0.05s of t=30.0", err)
         code, err, wrote = self.run_main(bad)
         self.assertEqual((code, wrote), (0, True))
         self.assertIn("coaching: habit 1", err)
@@ -235,17 +237,30 @@ class Cli(unittest.TestCase):
             for pull in r["pulls"]:
                 for p in pull["players"]:
                     wowlog.print_report(pull["label"], p)
-        self.assertEqual(out.getvalue(), expected.getvalue())
+        self.assertEqual(out.getvalue(), f"Log: {r['log']}\n" + expected.getvalue())
         self.assertIn("Matched the SimC priority", out.getvalue())
 
     def test_unreadable_input_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as d:
             bad = os.path.join(d, "bad.json")
-            with open(bad, "w") as f:
-                f.write("{not json")
-            with mock.patch.object(sys, "argv", ["report.py", bad]), self.assertRaises(SystemExit) as err:
+            for content, message in (("{not json", "Couldn't read the report file"), ("[1]", "isn't a wowlog.py --json")):
+                with self.subTest(content=content):
+                    with open(bad, "w") as f:
+                        f.write(content)
+                    with mock.patch.object(sys, "argv", ["report.py", bad]), self.assertRaises(SystemExit) as err:
+                        report.main()
+                    self.assertIn(message, str(err.exception))
+
+    def test_text_for_an_empty_selection_says_so(self):
+        r = dict(real_report(), pulls=[])
+        with tempfile.TemporaryDirectory() as d:
+            rp = os.path.join(d, "r.json")
+            with open(rp, "w") as f:
+                json.dump(r, f)
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", ["report.py", rp, "--text"]), contextlib.redirect_stdout(out):
                 report.main()
-            self.assertIn("Couldn't read the report file", str(err.exception))
+        self.assertIn("No boss encounters in this log yet.", out.getvalue())
 
     def test_skill_only_uses_flags_the_scripts_accept(self):
         root = os.path.join(os.path.dirname(__file__), "..")
