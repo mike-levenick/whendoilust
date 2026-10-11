@@ -60,9 +60,14 @@ focused checklist keyed on what the diff touches:
 - **JSON shape** — if a field was renamed or removed, bump `schema` and say so.
 - **HTML report** — open it in a browser, light and dark, and print-preview it.
 
-Present via `AskUserQuestion`: **"Verified — proceed"** (recommended) or
-**"Bypass — I'll verify later"**. Don't skip silently. When bypassed, say in the
-PR body which claims rest on synthetic fixtures alone.
+**Only ask when there's something for the user to look at.** If every check
+above is mechanical and passed (the real-log text diff is empty or fully
+explained, tests green), proceed without asking and record the evidence in the
+PR's test plan. Ask via `AskUserQuestion` when a human eye adds something: an
+HTML/visual change (open it for them), coaching wording, or a mechanic claim
+they can confirm from in-game. Options: **"Verified — proceed"** (recommended)
+or **"Bypass — I'll verify later"**; when bypassed, say in the PR body which
+claims rest on synthetic fixtures alone.
 
 ## Step 3 — Commit, draft PR metadata, push and open
 
@@ -85,8 +90,17 @@ PR_NUM=$(gh pr view --json number --jq .number)
 
 ## Step 4 — Review panel
 
-Invoke **`/review-panel <PR_NUM>`** and follow it. Pass it the context a diff
-can't show:
+**Size the review to the risk** (this repo's policy, overriding the panel's
+defaults). Print the tier and why before firing:
+
+| Tier | The diff | Review |
+|---|---|---|
+| **None** | Docs, comments, config, CLAUDE.md, skill wording with no code | Skip review; CI only |
+| **Light** | Small, local code change (a flag, a path, a message) with tests | One lens (`review-correctness`, or `review-tests` if it's mostly tests) |
+| **Full** | Untrusted input reaching HTML/files, the JSON contract, new state logic (windows, build detection, proc models), or anything shared users run | `/review-panel` with the 2-3 lenses the diff earns |
+
+For Light and Full, invoke **`/review-panel <PR_NUM>`** (with the lens choice
+above) and follow it. Pass it the context a diff can't show:
 
 - **Load-bearing claims to attack**, e.g. *"Can a REFRESH paired with a stack
   change be counted as a wasted proc?"* · *"Does a proc that appeared <0.4s
@@ -98,7 +112,20 @@ can't show:
   approximate; Orb/Pulse charges aren't visible in the log, so they fold into
   "filler".
 
-Policy: fix pre-existing bugs in code the diff touches, in this PR.
+Policy for findings:
+- **BLOCKER / MAJOR**: fix in this PR (or push back with evidence).
+- **MINOR**: fix in this PR only if it's a real defect on a reachable path and
+  cheap. Test hardening, edge cases nobody hits, and defensive validation go to
+  a fast-follow issue instead; a hobby tool doesn't need every MINOR in-line,
+  and every in-line fix is more code for the next round to review.
+- **NIT**: usually skip.
+- Pre-existing bugs in code the diff touches: fix if MAJOR, otherwise issue.
+
+**Second round only for new state logic.** Run one (scoped to the fix delta)
+only when the fixes introduced a new state machine or tracking structure, or you
+aren't sure a fix is right. Validation, messages, tests, docs and mechanical
+fixes don't earn one. A second round still producing MAJORs means rethink the
+change, not a third round.
 
 ## Step 5 — Verify before claiming done
 
@@ -107,7 +134,8 @@ python3 -m py_compile wowlog.py && python3 -m unittest discover -s tests -v
 ```
 
 - **Teeth-check any new regression test**: revert the fix, watch the test fail,
-  restore.
+  restore. Do it in a throwaway copy (`cp -R` the repo files into a temp dir),
+  never in the working tree: reviewers may be reading it at the same time.
 - State plainly which fixes rest on inspection alone.
 
 ## Step 6 — Report
@@ -146,7 +174,8 @@ step 8; anything else → report and stop. On failure, read
 
 ## Step 9 — Merge
 
-**Ask before merging.** Show the command and let the user say go:
+**Ask before merging**, unless the user has granted standing merge-on-green
+approval for this work (check memory). Show the command and let the user say go:
 
 ```bash
 gh pr merge $PR_NUM --squash --delete-branch
