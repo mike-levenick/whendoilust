@@ -10,6 +10,13 @@ report (see `check_coaching`).
 ```json
 {
   "headline": "One or two sentences: the overall verdict and the biggest lever.",
+  "strengths": [
+    {
+      "title": "Short statement of something done well, e.g. 'Arcane Soul spent on Barrage'",
+      "detail": "One or two sentences with the numbers from the JSON.",
+      "moments": [{"pull": 2, "t": 21.758, "note": "optional"}]
+    }
+  ],
   "habits": [
     {
       "title": "Short imperative, e.g. 'Missiles before Blast when Clearcasting is up and Salvo is low'",
@@ -19,6 +26,7 @@ report (see `check_coaching`).
       "moments": [{"pull": 4, "t": 102.2, "note": "optional one-line tooltip", "player": "optional name"}]
     }
   ],
+  "tips": ["One-line reminder for the next pull.", "..."],
   "pulls": {"4": "1-2 sentences for pull #4."},
   "caveats": ["Where a flagged 'mistake' may be correct, or the data is thin."]
 }
@@ -32,6 +40,13 @@ report (see `check_coaching`).
   shows what the habit says, so pick moments that genuinely do.
   `player` (a name prefix) is only for moments about a comparison player; the default is the main player.
   Moments must be in pulls whose `build.supported` is true. Each renders as a chip that jumps there.
+- The report shows the coaching in three sections: **What went well** (`strengths`), **Work on** (`habits`)
+  and **Top tips for next pull** (`tips`).
+- `strengths`: **up to 3** things the player did well, best first, each with a `detail` grounded in the JSON
+  and optional `moments` (checked exactly like habit moments). Real strengths only; skip the section rather
+  than invent praise.
+- `tips`: **up to 3** one-line reminders to keep in mind on the next pull, usually the habits boiled down
+  to a cue ("Clearcasting up and Salvo under 12? Missiles first."). No numbers needed.
 - `pulls`: keyed by pull number as a string. One or two sentences each; skip a pull rather than pad.
 - Every field is optional; unknown fields are ignored.
 

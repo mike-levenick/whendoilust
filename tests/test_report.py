@@ -46,7 +46,9 @@ def real_report(name_suffix=""):
 
 def coaching(text="Keep Salvo high."):
     return {"headline": text, "habits": [{"title": text, "what": text, "instead": text, "why": text,
-            "moments": [{"pull": 1, "t": 4.0, "note": text}]}], "pulls": {"1": text}, "caveats": [text]}
+            "moments": [{"pull": 1, "t": 4.0, "note": text}]}],
+            "strengths": [{"title": text, "detail": text, "moments": [{"pull": 1, "t": 1.5, "note": text}]}],
+            "tips": [text], "pulls": {"1": text}, "caveats": [text]}
 
 
 def embedded(page, element_id):
@@ -77,13 +79,19 @@ class Embedding(unittest.TestCase):
                 r = real_report()
                 r["pulls"][0]["boss"] = hostile
                 r["pulls"][0]["players"][0]["timeline"][0]["spell"] = hostile
-                page = report.render(r, coaching(hostile))
+                page = report.render(r, coaching(hostile), report.history(r, self.empty_dir()))
                 self.assertEqual(page.count("</script>"), script_tags)
                 self.assertNotRegex(page.split("<script>", 1)[0], "(?i)<!--")  # nothing opens a comment early
-                for element in ("report-data", "coaching-data"):
+                for element in ("report-data", "coaching-data", "history-data"):
                     self.assertNotRegex(re.search(rf'id="{element}">(.*?)</script>', page, re.S).group(1), "[<>&]")
                 self.assertEqual(embedded(page, "report-data")["pulls"][0]["boss"], hostile)
                 self.assertEqual(embedded(page, "coaching-data")["headline"], hostile)
+                self.assertEqual(embedded(page, "history-data")[0]["bosses"], [hostile])
+
+    def empty_dir(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return d.name
 
     def test_placeholders_in_names_are_not_expanded(self):
         page = report.render(real_report(name_suffix="{{REPORT}}"), coaching("{{COACHING}}"))
@@ -109,7 +117,8 @@ class SelfContained(unittest.TestCase):
     def test_coaching_is_optional(self):
         page = report.render(real_report())
         self.assertIsNone(embedded(page, "coaching-data"))
-        self.assertNotRegex(page, r"\{\{(TITLE|REPORT|COACHING)\}\}")
+        self.assertIsNone(embedded(page, "history-data"))
+        self.assertNotRegex(page, r"\{\{[A-Z]+\}\}")
 
 
 class CoachingCheck(unittest.TestCase):
@@ -128,6 +137,17 @@ class CoachingCheck(unittest.TestCase):
         self.assertIn("habit 1: no pull #9 in this report", problems)
         self.assertIn("habit 1: nothing in pull #1 within 0.05s of t=None", problems)
         self.assertIn("pull note for #7, which isn't in this report", problems)
+
+    def test_strengths_and_tips_are_checked_like_habits(self):
+        c = coaching()
+        c["strengths"][0]["moments"] = [{"pull": 1, "t": 30.0}]
+        c["strengths"] *= 4
+        c["tips"] = ["a", "b", "c", "d"]
+        problems = report.check_coaching(real_report(), c)
+        self.assertIn("4 strengths; the report shows the top 3 only", problems)
+        self.assertIn("strength 1: nothing in pull #1 within 0.05s of t=30.0", problems)
+        self.assertIn("4 tips; the report shows 3 at most", problems)
+        self.assertNotIn("habit 1", " ".join(problems))
 
     def test_tolerance_boundary_and_types(self):
         # The fixture's Barrage is at exactly 4.0s, and nothing else is within 0.6s of it.
@@ -182,6 +202,8 @@ class CoachingCheck(unittest.TestCase):
             "unicode digit key": {"pulls": {"\u00b2": "x"}}, "zero-padded key": {"pulls": {"01": "x"}},
             "headline a list": {"headline": ["x"]},
             "caveats a string": {"caveats": "x"},
+            "strengths a string": {"strengths": "x"}, "strength moments a string": {"strengths": [{"moments": "x"}]},
+            "tips a string": {"tips": "x"}, "tips of numbers": {"tips": [1]},
         }
         for name, c in shapes.items():
             with self.subTest(name):
@@ -210,6 +232,18 @@ class CoachingCheck(unittest.TestCase):
                     code = e.code
             return code, err.getvalue(), os.path.exists(html)
 
+    def test_a_bad_history_folder_leaves_an_existing_report_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            rp, html = os.path.join(d, "r.json"), os.path.join(d, "r.html")
+            with open(rp, "w") as f:
+                json.dump(real_report(), f)
+            with open(html, "w") as f:
+                f.write("earlier report")
+            argv = ["report.py", rp, "-o", html, "--history", os.path.join(d, "missing")]
+            with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+                report.main()
+            self.assertEqual(open(html).read(), "earlier report")
+
     def test_strict_fails_without_writing_and_lenient_warns_and_writes(self):
         bad = coaching()
         bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
@@ -220,6 +254,78 @@ class CoachingCheck(unittest.TestCase):
         self.assertEqual((code, wrote), (0, True))
         self.assertIn("coaching: habit 1", err)
         self.assertEqual(self.run_main(coaching(), "--strict"), (0, "", True))
+
+
+def session(started, name="Testmage-Realm-US", difficulty="Heroic", matched=6, total=10):
+    """A minimal report as wowlog --json shapes it, one pull, for the trend."""
+    p = {"name": name, "time_alive": 100.0, "casts": 50, "idle": {"total": 5.0},
+         "spec_checks": {"priority": {"matched": matched, "total": total},
+                         "clearcasting": {"gained": 10, "wasted": [{"in_soul": False}, {"in_soul": True}]}}}
+    return {"schema": 1, "log": "x.txt", "log_started": started,
+            "pulls": [{"number": 1, "boss": "Boss", "difficulty": difficulty, "result": "kill", "players": [p]}]}
+
+
+class History(unittest.TestCase):
+    def folder(self, files):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        for name, content in files.items():
+            with open(os.path.join(d.name, name), "w", encoding="utf-8") as f:
+                f.write(content if isinstance(content, str) else json.dumps(content))
+        return d.name
+
+    def test_metrics_are_the_main_players_session_numbers(self):
+        point = report.session_point(session("2026-10-09T20:00:00", difficulty="M+"))
+        self.assertEqual({k: point[k] for k in ("date", "content", "match", "idle", "cc_wasted", "cpm", "pulls", "kills")},
+                         {"date": "2026-10-09", "content": "M+", "match": 60, "idle": 5, "cc_wasted": 10, "cpm": 30,
+                          "pulls": 1, "kills": 1})
+        self.assertEqual(report.session_point(session("2026-10-09T20:00:00"))["content"], "Heroic raid")
+
+    def test_only_other_sessions_of_the_same_player_are_kept_in_date_order(self):
+        current = session("2026-10-10T19:00:00", matched=7)
+        folder = self.folder({
+            "b-later.json": session("2026-10-12T19:00:00", matched=9),
+            "a-earlier.json": session("2026-10-08T19:00:00", matched=5),
+            "copy-of-current.json": current,
+            "c.coaching.json": {"headline": "x", "schema": 1, "pulls": [1]},
+            "friend.json": session("2026-10-09T19:00:00", name="Someone-Realm-US"),
+            "broken.json": "{not json",
+            "wrong-shape.json": {"schema": 1, "pulls": [1, 2]},
+            "bad-start.json": dict(session("x"), log_started=["2026"]),
+            "empty.json": dict(session("2026-10-07T19:00:00"), pulls=[]),
+            "notes.txt": "hello",
+        })
+        points = report.history(current, folder)
+        self.assertEqual([(p["date"], p["match"], p.get("current", False)) for p in points],
+                         [("2026-10-08", 50, False), ("2026-10-10", 70, True), ("2026-10-12", 90, False)])
+
+    def test_one_point_per_log(self):
+        current = session("2026-10-10T19:00:00")
+        last_pull = session("2026-10-08T19:00:00", matched=1)
+        whole = session("2026-10-08T19:00:00", matched=8)
+        whole["pulls"] = whole["pulls"] * 3
+        rerun_of_current = dict(session("2026-10-10T19:00:00", matched=2), pulls=current["pulls"] * 2)
+        folder = self.folder({"a.json": last_pull, "b.json": whole, "c.json": rerun_of_current})
+        points = report.history(current, folder)
+        self.assertEqual([(p["date"], p["pulls"], p.get("current", False)) for p in points],
+                         [("2026-10-08", 3, False), ("2026-10-10", 1, True)])
+
+    def test_a_file_with_impossible_numbers_is_skipped(self):
+        bad = '{"schema": 1, "log_started": "2026-10-01T19:00:00", "pulls": [{"number": 1, "boss": "B", ' \
+              '"difficulty": "M+", "result": "kill", "players": [{"name": "Testmage-Realm-US", "time_alive": 1, ' \
+              '"casts": Infinity, "idle": {"total": 0}, "spec_checks": null}]}]}'
+        self.assertEqual(len(report.history(session("2026-10-10T19:00:00"), self.folder({"bad.json": bad}))), 1)
+
+    def test_percentages_round_half_up_like_the_page(self):
+        self.assertEqual(report.session_point(session("2026-10-10T19:00:00", matched=5, total=8))["match"], 63)
+
+    def test_first_report_is_just_the_current_point(self):
+        self.assertEqual(len(report.history(session("2026-10-10T19:00:00"), self.folder({}))), 1)
+
+    def test_missing_folder_is_a_clear_error(self):
+        with self.assertRaises(SystemExit) as e:
+            report.history(session("2026-10-10T19:00:00"), os.path.join(self.folder({}), "nope"))
+        self.assertIn("Couldn't read the history folder", str(e.exception))
 
 
 class Cli(unittest.TestCase):
@@ -296,11 +402,11 @@ def find_browser():
 class Renders(unittest.TestCase):
     """Runs the JS renderer in headless Chrome; skipped where there is no browser."""
 
-    def render_dom(self, r, c=None):
+    def render_dom(self, r, c=None, trend=None):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "r.html")
             with open(path, "w", encoding="utf-8") as f:
-                f.write(report.render(r, c))
+                f.write(report.render(r, c, trend))
             done = subprocess.run([find_browser(), "--headless=new", "--disable-gpu", "--no-sandbox", "--dump-dom",
                                    "--virtual-time-budget=3000", f"file://{path}#pull-1@4"],
                                   capture_output=True, text=True, timeout=60)
@@ -312,6 +418,21 @@ class Renders(unittest.TestCase):
         self.assertIn("<svg", dom)
         self.assertIn("Habit 1", dom)
         self.assertIn("Keep Salvo high.", dom)
+        for section in ("What went well", "Work on", "Top tips for next pull"):
+            self.assertIn(section, dom)
+        self.assertNotIn(">Trend<", dom)  # no --history, no trend section
+
+    def test_trend_renders_with_history(self):
+        r = real_report()
+        trend = [dict(report.session_point(session("2026-10-01T19:00:00")), bosses=["<b>x</b>"]),
+                 dict(report.session_point(r), current=True)]
+        dom = self.render_dom(r, coaching(), trend)
+        self.assertIn('data-rendered="1"', dom)
+        self.assertIn(">Trend<", dom)
+        self.assertIn("vs 2026-10-01", dom)
+        self.assertNotIn("<b>x</b>", dom)
+        one = self.render_dom(r, None, trend[1:])
+        self.assertIn("first report in the folder", one)
 
     def test_hostile_text_still_renders(self):
         r = real_report()
