@@ -1,0 +1,34 @@
+## Categorizes PRs in `gh release create --generate-notes` output by label.
+## Without this file, GitHub dumps every merged PR flat under "What's
+## Changed". With it, the release page reads like a real changelog.
+##
+## Workflow: open every PR with one of the labels below — `feature`,
+## `bug`, `chore`, `tech-debt`, or `documentation`. Unlabeled PRs fall
+## into "Other Changes" so nothing's silently dropped.
+##
+## Excluded labels: duplicate / invalid / wontfix never made it to main,
+## so don't include them in changelogs even if somehow attached.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: New Features
+      labels:
+        - feature
+        - enhancement
+    - title: Bug Fixes
+      labels:
+        - bug
+    - title: Maintenance & Cleanup
+      labels:
+        - chore
+        - tech-debt
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other Changes
+      labels:
+        - "*"

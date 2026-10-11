@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # No `push` trigger — merging a PR to main re-runs the identical code
+  # we already tested on the PR.
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The analyzer is stdlib-only by design (it ships inside a skill that
+      # runs on other people's machines), so there is nothing to install.
+      - name: Compile
+        run: python -m py_compile wowlog.py
+
+      # Synthetic fixtures only — real combat logs are hundreds of MB and
+      # never committed.
+      - name: Test
+        run: python -m unittest discover -s tests -v

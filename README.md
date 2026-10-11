@@ -1,0 +1,47 @@
+# whendoilust
+
+A rotation coach for **Arcane Mage (Sunfury, Midnight Season 2 4-piece)** built
+from World of Warcraft advanced combat logs. It replays every cast against the
+SimulationCraft priority list and reports wasted procs, downtime, cooldown
+timing, and where your button presses differed from the priority.
+
+> Work in progress. The goal is a Claude Code skill that analyzes your log,
+> writes human-friendly coaching, and produces a self-contained HTML report
+> you can share or save as PDF. See the
+> [v1 milestone](https://github.com/mike-levenick/whendoilust/milestone/1).
+
+## Requirements
+
+- Python 3.9+ (standard library only)
+- **Advanced Combat Logging** enabled in WoW (*Options → System → Network*), and
+  logging turned on with `/combatlog`
+- Only Arcane Sunfury with the Season 2 4-piece gets spec coaching today; other
+  specs see generic stats only.
+
+## Usage
+
+```
+python3 wowlog.py --list              # numbered boss pulls in the newest log
+python3 wowlog.py --last              # most recent pull
+python3 wowlog.py --pull 3            # a specific pull
+python3 wowlog.py --boss Avatar       # every pull of a boss
+python3 wowlog.py --last --json       # machine-readable report
+python3 wowlog.py path/to/WoWCombatLog-*.txt --compare SomeMage   # another player in the same log
+```
+
+By default it reads the newest log in the retail `Logs` folder, including logs
+the Warcraft Logs / Archon uploader has moved to `Logs/warcraftlogsarchive/`,
+and analyzes the character who recorded the log.
+
+## Development
+
+```
+./scripts/install-hooks.sh                    # Conventional Commits hook
+python3 -m unittest discover -s tests -v
+```
+
+`main` is protected; changes land through squash-merged PRs. See `CLAUDE.md`.
+
+## License
+
+MIT

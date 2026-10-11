@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Combat logs are huge and personal; never commit them
+*CombatLog*.txt
+.DS_Store

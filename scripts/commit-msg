@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# commit-msg hook — enforces Conventional Commits.
+# Installed by ./scripts/install-hooks.sh into .git/hooks/commit-msg
+
+commit_msg_file="$1"
+first_line=$(head -n1 "$commit_msg_file")
+
+# Allow merge commits and fixups
+if [[ "$first_line" =~ ^(Merge |Revert |fixup!|squash!|amend!) ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(\([a-z0-9_-]+\))?!?: .+'
+
+if [[ ! "$first_line" =~ $pattern ]]; then
+  echo "" >&2
+  echo "✘ Commit message does not follow Conventional Commits format." >&2
+  echo "" >&2
+  echo "  Got:      $first_line" >&2
+  echo "  Expected: <type>(<optional scope>): <description>" >&2
+  echo "" >&2
+  echo "  Types: feat, fix, chore, docs, refactor, test, build, ci, perf, style, revert" >&2
+  echo "  Example: feat(report): add proc luck section" >&2
+  echo "" >&2
+  exit 1
+fi
