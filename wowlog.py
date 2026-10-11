@@ -47,7 +47,11 @@ def read_events(path):
             if not sep:
                 continue
             if rest.startswith("COMBATANT_INFO"):
-                continue  # nested bracket structure; not needed yet
+                # Nested brackets (talents, gear) follow; only the scalar head is parsed.
+                # Its last field is the spec ID.
+                head = rest.split(",[", 1)[0].split(",")
+                yield parse_ts(ts), ["COMBATANT_INFO", head[1], head[-1]]
+                continue
             fields = next(csv.reader([rest]))
             yield parse_ts(ts), fields
 
@@ -319,21 +323,63 @@ def check_arcane_sunfury(r, t0):
     return spec, verdicts
 
 
-SPEC_CHECKS = {"Arcane Missiles": check_arcane_sunfury}  # crude spec detection by signature spell
+SPECS = {  # COMBATANT_INFO spec IDs
+    250: "Blood", 251: "Frost DK", 252: "Unholy", 577: "Havoc", 581: "Vengeance",
+    102: "Balance", 103: "Feral", 104: "Guardian", 105: "Restoration Druid",
+    1467: "Devastation", 1468: "Preservation", 1473: "Augmentation", 253: "Beast Mastery", 254: "Marksmanship",
+    255: "Survival", 62: "Arcane", 63: "Fire", 64: "Frost Mage", 268: "Brewmaster", 270: "Mistweaver",
+    269: "Windwalker", 65: "Holy Paladin", 66: "Protection Paladin", 70: "Retribution", 256: "Discipline",
+    257: "Holy Priest", 258: "Shadow", 259: "Assassination", 260: "Outlaw", 261: "Subtlety",
+    262: "Elemental", 263: "Enhancement", 264: "Restoration Shaman", 265: "Affliction", 266: "Demonology",
+    267: "Destruction", 71: "Arms", 72: "Fury", 73: "Protection Warrior",
+}
+SUPPORTED_BUILD = "Arcane Sunfury with the Season 2 4-piece"
+# Buffs only that build gains. Checked across the whole log, since a short pull may never show them.
+SUNFURY_AURAS = {"Spellfire Sphere", "Arcane Soul"}
+SET_4PC_AURA = "Cumulative Power"
+SPEC_CHECKS = {"arcane_sunfury_4pc": check_arcane_sunfury}
+
+
+def detect_build(encounters, guid):
+    """Spec from COMBATANT_INFO (logged at every pull start); hero tree and 4-piece from signature buffs."""
+    spec_id, auras = None, set()
+    for enc in encounters:
+        for _, f in enc.events:
+            if f[0] == "COMBATANT_INFO" and f[1] == guid and f[2].isdigit():
+                spec_id = int(f[2])
+            elif f[0] == "SPELL_AURA_APPLIED" and len(f) > 10 and f[5] == guid:
+                auras.add(f[10])
+    sunfury = spec_id == 62 and bool(auras & SUNFURY_AURAS)
+    set_4pc = SET_4PC_AURA in auras
+    key = "arcane_sunfury_4pc" if sunfury and set_4pc else None
+    return {
+        "spec_id": spec_id,
+        "spec": SPECS.get(spec_id, f"spec {spec_id}" if spec_id else "unknown"),
+        "hero_tree": "Sunfury" if sunfury else None,
+        "set_4pc": set_4pc,
+        "checks": key,
+        "supported": key in SPEC_CHECKS,
+    }
+
+
+def build_line(b):
+    if b["supported"]:
+        return f"  Build: {b['spec']} {b['hero_tree']}, Season 2 4-piece"
+    have = b["spec"]
+    if b["spec_id"] == 62:
+        have += (" Sunfury" if b["hero_tree"] else ", not Sunfury") + (", 4-piece" if b["set_4pc"] else ", no 4-piece")
+    return f"  Build: {have} - spec coaching only supports {SUPPORTED_BUILD}; showing generic stats"
 STATE_KEYS = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting", "Arcane Soul": "arcane_soul",
               "Cumulative Power": "cumulative_power", "Prismatic Bolt!": "prismatic_bolt"}
 
 
-def summarize(enc, guid, name):
+def summarize(enc, guid, name, build):
     """Everything known about one player in one pull, as plain JSON-ready data. Times are seconds from pull start."""
     r = analyze(enc, guid)
     t0, alive = enc.start, r["fight_len"]
     counts = Counter(s for _, s, _ in r["casts"])
     rot = [c for c in r["casts"] if c[1] not in NON_ROTATIONAL]
-    spec, verdicts = None, {}
-    for spell, fn in SPEC_CHECKS.items():
-        if spell in counts:
-            spec, verdicts = fn(r, t0)
+    spec, verdicts = SPEC_CHECKS[build["checks"]](r, t0) if build["supported"] else (None, {})
     timeline = []
     for i, (t, spell, st) in enumerate(r["casts"]):
         entry = {"t": rnd(t - t0), "spell": spell,
@@ -345,6 +391,7 @@ def summarize(enc, guid, name):
     return {
         "name": name,
         "guid": guid,
+        "build": build,
         "time_alive": rnd(alive),
         "died_at": rnd(r["death"]) if r["death"] is not None else None,
         "casts": len(rot),
@@ -363,6 +410,7 @@ def print_report(label, p):
     alive = p["time_alive"]
     note = f" (you died at {p['died_at']:.0f}s)" if p["died_at"] is not None else ""
     print(f"  Time alive in fight: {alive:.0f}s{note}")
+    print(build_line(p["build"]))
     if alive > 0:
         print(f"  Casts: {p['casts']}  ({p['casts_per_minute']:.0f} per minute)")
         print(f"  Idle time (gaps > {IDLE_THRESHOLD:.0f}s with nothing cast): {p['idle']['total']:.1f}s = {100 * p['idle']['total'] / alive:.0f}% of the fight")
@@ -455,7 +503,8 @@ def main():
     args = ap.parse_args()
     path = args.logfile or newest_log(args.log_dir)
     players = [find_player(path, args.player)] + [find_player(path, n) for n in args.compare]
-    numbered = list(enumerate((e for e in split_encounters(path) if e.duration > 5), 1))
+    encounters = [e for e in split_encounters(path) if e.duration > 5]
+    numbered = list(enumerate(encounters, 1))
     if args.list:
         print(f"Log: {os.path.basename(path)}")
         for i, e in numbered:
@@ -467,7 +516,9 @@ def main():
         numbered = [(i, e) for i, e in numbered if args.boss.lower() in e.name.lower()]
     if args.last:
         numbered = numbered[-1:]
-    pulls = [dict(pull_info(i, e), players=[summarize(e, guid, name) for guid, name in players]) for i, e in numbered]
+    builds = {guid: detect_build(encounters, guid) for guid, _ in players}
+    pulls = [dict(pull_info(i, e), players=[summarize(e, guid, name, builds[guid]) for guid, name in players])
+             for i, e in numbered]
     if args.json:
         json.dump({"schema": 1, "log": os.path.basename(path), "log_started": log_started(path).isoformat(),
                    "pulls": pulls}, sys.stdout, indent=1)

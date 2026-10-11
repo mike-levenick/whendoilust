@@ -16,7 +16,7 @@ python3 wowlog.py --pull 13                    # a specific pull
 python3 wowlog.py --boss Sentinels             # all pulls of a boss
 python3 wowlog.py --last --json                # same report as JSON (schema 1), for the dashboard
 ```
-JSON: `{schema, log, log_started, pulls: [{number, boss, difficulty, result, start, duration, players: [{name, idle, abilities, failed_casts, spec_checks, timeline}]}]}`. Times are seconds from pull start. `timeline` has every cast with its state (charges, salvo, clearcasting, arcane_soul, cumulative_power, prismatic_bolt) and, for rotational casts, `expected`/`reason`/`matched` against the SimC priority. The text report is rendered from the same data (`summarize` → `print_report`).
+JSON: `{schema, log, log_started, pulls: [{number, boss, difficulty, result, start, duration, players: [{name, build, idle, abilities, failed_casts, spec_checks, timeline}]}]}`. Times are seconds from pull start. `timeline` has every cast with its state (charges, salvo, clearcasting, arcane_soul, cumulative_power, prismatic_bolt) and, for rotational casts, `expected`/`reason`/`matched` against the SimC priority. The text report is rendered from the same data (`summarize` → `print_report`).
 Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` on macOS, `C:\Program Files (x86)\World of Warcraft\_retail_\Logs` on Windows; `--log-dir` / `$WOWLOG_DIR` override (newest by the date in the filename is used by default; pass a path to override). The Archon uploader archives logs untouched for 3 days into `Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt` (uncompressed, but mtime reset), and the script searches there too. Safe to run while the game is still logging. "Check last pull" from the user means run `--last` and summarize the rotation findings; add `--compare Zaffira` only when Zaffira is in the log (they're absent from most runs, so nothing should be built specifically for them).
 
 ## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources
@@ -27,10 +27,11 @@ Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` on macO
 - Cumulative Power (4pc): builds to 8 during a Missiles channel, expires ~2.5s after; consumed by Prismatic Bolt. "Prismatic Bolt!" aura = Bolt available.
 - Arcane Charges come from SPELL_ENERGIZE power type 16 (amount, overEnergize); the tool's charge count is approximate (Barrage resets to 0).
 - SimC Sunfury priority: Missiles if CC & Salvo<12 → Bolt at 8 CP (no Soul) → Barrage if (4 charges & (CC & Salvo≥12 | Salvo=25)) | Soul | (Salvo>8 & Touch ready) → Bolt → Orb (charges<3) → Blast. Surge (90s) with Touch of the Magi (45s); never hold Touch.
+- Build gate (`detect_build`): spec checks run only for Arcane (spec 62) + Sunfury (a Spellfire Sphere or Arcane Soul buff anywhere in the log) + S2 4-piece (a Cumulative Power buff anywhere in the log). Other builds get generic stats only. Talent node IDs in COMBATANT_INFO aren't decoded.
 - Procs (CC, Bolt!, Soul) gained <0.4s before a cast are treated as not yet available (reaction allowance).
 
 ## Log format notes
-- Line = `M/D/YYYY HH:MM:SS.mmm-TZ  EVENT,fields...` (two spaces). COMBATANT_INFO is skipped. Player is found via unit flags `0x511` (mine).
+- Line = `M/D/YYYY HH:MM:SS.mmm-TZ  EVENT,fields...` (two spaces). COMBATANT_INFO (logged for every player at each ENCOUNTER_START / CHALLENGE_MODE_START) is parsed only for its spec ID, the last scalar field before the talent brackets (62 = Arcane). Player is found via unit flags `0x511` (mine).
 - Advanced params follow the spell prefix on CAST_SUCCESS; aura DOSE events end with the new stack count.
 
 ## Progress log
