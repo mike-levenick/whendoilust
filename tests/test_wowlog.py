@@ -93,8 +93,20 @@ class NewestLog(unittest.TestCase):
             for p in (newer, older):  # archiving resets mtime, so the older log is touched last
                 open(p, "w").close()
             os.utime(older, (2e9, 2e9))
-            with mock.patch.object(wowlog, "LOG_DIR", d):
+            with mock.patch.object(wowlog, "LOG_DIRS", [os.path.join(d, "missing"), d]):
                 self.assertEqual(wowlog.newest_log(), newer)
+
+    def test_override_folder_wins_and_missing_logs_say_where_it_looked(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "WoWCombatLog-101026_192927.txt")
+            open(log, "w").close()
+            with mock.patch.object(wowlog, "LOG_DIRS", ["/nonexistent"]):
+                self.assertEqual(wowlog.newest_log(d), log)
+                with mock.patch.dict(os.environ, {"WOWLOG_DIR": d}):
+                    self.assertEqual(wowlog.newest_log(), log)
+                with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit) as err:
+                    wowlog.newest_log()
+                self.assertIn("/nonexistent", str(err.exception))
 
 
 if __name__ == "__main__":
