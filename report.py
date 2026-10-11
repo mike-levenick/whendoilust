@@ -10,14 +10,17 @@ import argparse
 import html
 import json
 import os
+import re
 import sys
 
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_template.html")
 
 
 def embed(obj):
-    # JSON inside <script type="application/json">: only "</" can end the element early.
-    return json.dumps(obj, separators=(",", ":")).replace("</", "<\\/")
+    # JSON inside <script type="application/json">. Escaping every < > & (valid JSON string escapes) means no
+    # log or coaching text can end the element or open "<!--<script", which would swallow the real </script>.
+    text = json.dumps(obj, separators=(",", ":"))
+    return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def render(report, coaching=None):
@@ -26,9 +29,9 @@ def render(report, coaching=None):
     players = {p["name"] for pull in report["pulls"] for p in pull["players"]}
     who = ", ".join(sorted(n.split("-")[0] for n in players)) or "No player"
     title = f"{who} - {report['log_started'][:10]}"
-    return (page.replace("{{TITLE}}", html.escape(title))
-                .replace("{{REPORT}}", embed(report))
-                .replace("{{COACHING}}", embed(coaching)))
+    values = {"TITLE": html.escape(title), "REPORT": embed(report), "COACHING": embed(coaching)}
+    # One pass, so substituted text (which may contain "{{REPORT}}" in a player name) is never re-expanded.
+    return re.sub(r"\{\{(TITLE|REPORT|COACHING)\}\}", lambda m: values[m.group(1)], page)
 
 
 def main():

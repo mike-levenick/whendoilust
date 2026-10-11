@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
 <title>{{TITLE}}</title>
 <style>
 :root {
@@ -155,6 +156,14 @@ details summary { cursor: pointer; color: var(--ink-2); }
 <script>
 (function () {
   "use strict";
+  try { main(); } catch (err) {
+    document.body.dataset.rendered = "error";
+    const b = document.createElement("pre");
+    b.style.cssText = "margin:16px;padding:12px;border:1px solid #d03b3b;white-space:pre-wrap";
+    b.textContent = "This report failed to render: " + (err && err.stack || err);
+    document.body.prepend(b);
+  }
+  function main() {
   const report = JSON.parse(document.getElementById("report-data").textContent);
   const coaching = JSON.parse(document.getElementById("coaching-data").textContent);
   const SVGNS = "http://www.w3.org/2000/svg";
@@ -163,11 +172,12 @@ details summary { cursor: pointer; color: var(--ink-2); }
 
   // ---------- helpers ----------
   const $ = (id) => document.getElementById(id);
+  const EVENTS = new Set(["onclick", "onkeydown"]);
   function el(tag, attrs, ...kids) {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
-      if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
-      else n.setAttribute(k, v);
+      if (k === "class") n.className = v; else if (EVENTS.has(k)) n.addEventListener(k.slice(2), v);
+      else if (!k.startsWith("on")) n.setAttribute(k, v);
     }
     for (const k of kids) if (k != null) n.append(k instanceof Node ? k : document.createTextNode(String(k)));
     return n;
@@ -183,7 +193,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
     if (style) n.setAttribute("style", style);
     return n;
   }
-  const fmt = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  const fmt = (t) => { const d = Math.round(t * 10); return `${Math.floor(d / 600)}:${((d % 600) / 10).toFixed(1).padStart(4, "0")}`; };
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
   const short = (name) => name.split("-")[0];
 
@@ -255,10 +265,11 @@ details summary { cursor: pointer; color: var(--ink-2); }
     for (const m of list || []) {
       const pull = pulls.find((p) => p.number === m.pull);
       if (!pull) continue;
+      const t = Number.isFinite(m.t) && m.t >= 0 && m.t <= pull.duration ? m.t : null;
       chips.append(el("button", {
-        class: "chip", type: "button", title: m.note || "",
-        onclick: () => jumpTo(m.pull, m.t),
-      }, `${pull.boss.split(" ")[0]} ${fmt(m.t)}`));
+        class: "chip", type: "button", title: [pull.boss, m.note].filter(Boolean).join(" - "),
+        onclick: () => jumpTo(m.pull, t),
+      }, t == null ? `#${pull.number}` : `#${pull.number} ${fmt(t)}`));
     }
     return chips;
   }
@@ -310,7 +321,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
 
   function jumpTo(number, t) {
     selectPull(number, t);
-    history.replaceState(null, "", `#pull-${number}@${t}`);
+    try { history.replaceState(null, "", t == null ? `#pull-${number}` : `#pull-${number}@${t}`); } catch (e) { /* file:// in some browsers */ }
     $("pull").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -407,6 +418,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
     label("Other", castTop + castRows.length * rowH + rowH / 2);
     const marks = [];
     p.timeline.forEach((e, i) => {
+      if (e.t > end) return;
       const cy = castTop + rowOf(e.spell) * rowH + rowH / 2, cx = x(e.t);
       let m;
       if (e.matched === false) {
@@ -426,13 +438,14 @@ details summary { cursor: pointer; color: var(--ink-2); }
     s.append(svg("line", { x1: L, x2: W - R, y1: sy(12), y2: sy(12), stroke: "--axis", "stroke-width": 1 }));
     const t12 = svg("text", { x: L + 3, y: sy(12) - 3 }); t12.textContent = "12"; s.append(t12);
     s.append(svg("line", { x1: L, x2: W - R, y1: sy(0), y2: sy(0), stroke: "--grid", "stroke-width": 1 }));
-    s.append(stepPath(p.series.salvo, x, sy, end, "--s1"));
+    const series = p.series || {};
+    s.append(stepPath(series.salvo, x, sy, end, "--s1"));
 
     // Clearcasting (0-3) and wasted procs
     const cy3 = (n) => ccTop + ccH - (ccH * n) / 3;
     label("Clearcasting", ccTop + ccH / 2);
     s.append(svg("line", { x1: L, x2: W - R, y1: cy3(0), y2: cy3(0), stroke: "--grid", "stroke-width": 1 }));
-    s.append(stepPath(p.series.clearcasting, x, cy3, end, "--s2"));
+    s.append(stepPath(series.clearcasting, x, cy3, end, "--s2"));
     if (c) for (const w of c.clearcasting.wasted) {
       const wx = x(w.t), wy = cy3(3);
       s.append(svg("path", { d: `M${wx - 3.5},${wy - 3.5}L${wx + 3.5},${wy + 3.5}M${wx - 3.5},${wy + 3.5}L${wx + 3.5},${wy - 3.5}`,
@@ -444,14 +457,16 @@ details summary { cursor: pointer; color: var(--ink-2); }
       const y = winTop + i * 16 + 3;
       label(name, y + 5);
       for (const w of (p.windows || {})[name] || []) {
-        s.append(svg("rect", { x: x(w.start), y, width: Math.max(2, x(w.end) - x(w.start)), height: 10, rx: 3,
+        if (w.start > end) continue;
+        s.append(svg("rect", { x: x(w.start), y, width: Math.max(2, x(Math.min(w.end, end)) - x(w.start)), height: 10, rx: 3,
           fill: color }));
       }
     });
 
     // persistent highlight from a coaching moment
-    if (highlight != null) {
-      s.append(svg("line", { x1: x(highlight), x2: x(highlight), y1: T, y2: axisY, stroke: "--ink", "stroke-width": 2 }));
+    const hl = !printing && highlight != null && highlight <= end ? highlight : null;
+    if (hl != null) {
+      s.append(svg("line", { x1: x(hl), x2: x(hl), y1: T, y2: axisY, stroke: "--ink", "stroke-width": 2 }));
     }
     // crosshair + tooltip
     const cross = svg("line", { y1: T, y2: axisY, stroke: "--ink-2", "stroke-width": 1, visibility: "hidden" });
@@ -479,9 +494,9 @@ details summary { cursor: pointer; color: var(--ink-2); }
       };
       hit.addEventListener("pointermove", (ev) => show(ev.clientX, ev.clientY));
       hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
-      if (highlight != null) requestAnimationFrame(() => {
+      if (hl != null) requestAnimationFrame(() => {
         const rect = s.getBoundingClientRect();
-        show(rect.left + (x(highlight) / W) * rect.width, rect.top + castTop + 20);
+        show(rect.left + (x(hl) / W) * rect.width, rect.top + castTop + 20);
       });
     }
 
@@ -497,6 +512,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
   function stepPath(points, x, y, end, color) {
     let d = "", prev = null;
     for (const [t, n] of points || []) {
+      if (t > end) break;
       d += prev == null ? `M${x(t)},${y(n)}` : `H${x(t)}V${y(n)}`;
       prev = n;
     }
@@ -579,11 +595,17 @@ details summary { cursor: pointer; color: var(--ink-2); }
   renderSummary();
   renderCoach();
   // Deep link: #pull-4 or #pull-4@102.2 opens that pull (and moment).
-  const m = /^#pull-(\d+)(?:@([\d.]+))?$/.exec(location.hash);
-  if (m && pulls.some((p) => p.number === +m[1])) {
+  function openHash() {
+    const m = /^#pull-(\d+)(?:@(\d+(?:\.\d+)?))?$/.exec(location.hash);
+    if (!m || !pulls.some((p) => p.number === +m[1])) return false;
     selectPull(+m[1], m[2] == null ? null : +m[2]);
     requestAnimationFrame(() => $("pull").scrollIntoView({ block: "start" }));
-  } else if (pulls.length) selectPull(pulls[pulls.length - 1].number);
+    return true;
+  }
+  window.addEventListener("hashchange", openHash);
+  if (!openHash() && pulls.length) selectPull(pulls[pulls.length - 1].number);
+  document.body.dataset.rendered = "1";
+  }
 })();
 </script>
 </body>

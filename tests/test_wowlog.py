@@ -132,6 +132,41 @@ class Windows(LogTest):
         self.assertEqual(p["series"]["clearcasting"], [[3.0, 1], [4.0, 2]])
 
 
+    def test_window_edge_cases(self):
+        removed = lambda line: line.replace("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED")
+        boss2 = 'Creature-0-1-1-1-1-0000000002,"Training Add",0x10a48,0x80000000'
+        touch = lambda ev, target=BOSS, src=ME: f"{ev},{src},{target},210824,\"Touch of the Magi\",0x40,DEBUFF"
+        other_mage = 'Player-1-00000002,"Othermage-Realm-US",0x512,0x80000000'
+        write_log(self.path, [
+            (3.0, removed(aura("Time Warp", 80353))),                # up before the pull: only REMOVED logged
+            (5.0, aura("Bloodlust", 2825)), (6.0, aura("Primal Rage", 264667)),
+            (9.0, removed(aura("Bloodlust", 2825))),                 # Primal Rage is still up
+            (20.0, removed(aura("Primal Rage", 264667))),
+            (10.0, touch("SPELL_AURA_APPLIED")),
+            (12.0, touch("SPELL_AURA_APPLIED", target=boss2)),       # re-applied before the first target's REMOVED
+            (13.0, touch("SPELL_AURA_REMOVED")),
+            (24.0, touch("SPELL_AURA_REMOVED", target=boss2)),
+            (15.0, touch("SPELL_AURA_APPLIED", src=other_mage)),     # someone else's Touch: not ours
+            (30.0, aura("Arcane Soul", 451038)), (34.0, removed(aura("Arcane Soul", 451038))),
+        ])
+        p = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
+        self.assertEqual(p["windows"]["Lust"], [{"start": 0.0, "end": 3.0}, {"start": 5.0, "end": 9.0},
+                                                {"start": 6.0, "end": 20.0}])
+        self.assertEqual(p["windows"]["Touch of the Magi"], [{"start": 10.0, "end": 12.0}, {"start": 12.0, "end": 24.0}])
+        self.assertEqual(p["windows"]["Arcane Soul"], [{"start": 30.0, "end": 34.0}])
+
+    def test_nothing_after_death_is_drawn(self):
+        died = f"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-1-00000001,\"Testmage-Realm-US\",0x511,0x80000000,0"
+        write_log(self.path, [
+            (2.0, aura("Arcane Surge", 365362)), (3.0, cc("SPELL_AURA_APPLIED")), (20.0, died),
+            (40.0, aura("Arcane Soul", 451038)), (41.0, cc("SPELL_AURA_APPLIED_DOSE", 2)),  # after a battle res
+        ])
+        p = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]
+        self.assertEqual(p["died_at"], 20.0)
+        self.assertEqual(p["windows"], {"Arcane Surge": [{"start": 2.0, "end": 20.0}]})
+        self.assertEqual(p["series"]["clearcasting"], [[3.0, 1]])
+
+
 class BuildGate(LogTest):
     def player(self, build, body=MISSILES):
         write_log(self.path, body, build=build)

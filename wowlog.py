@@ -129,6 +129,7 @@ def analyze(enc, guid):
     failed = Counter()
     salvo_capped_hits = 0              # Missiles hits landing while Arcane Salvo was already at 25
     windows = defaultdict(list)        # window name -> [[start, end or None]]
+    open_span = {}                     # (spell, target) -> open [start, None] span; two lusts don't collide
     series = defaultdict(list)         # SERIES key -> [(t, stacks)]
 
     for t, f in enc.events:
@@ -158,12 +159,18 @@ def analyze(enc, guid):
                 series[SERIES[spell]].append((t, stacks[spell]))
         window = (WINDOW_BUFFS.get(spell) if dst == guid else None) or \
                  (WINDOW_DEBUFFS.get(spell) if src == guid and dst != guid else None)
-        if window and ev in ("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED"):
-            spans = windows[window]
-            if ev == "SPELL_AURA_APPLIED" and not (spans and spans[-1][1] is None):
-                spans.append([t, None])
-            elif ev == "SPELL_AURA_REMOVED" and spans and spans[-1][1] is None:
-                spans[-1][1] = t
+        if window and ev == "SPELL_AURA_APPLIED":
+            # A new application ends this spell's other spans (Touch moved to a new target, maybe one that died
+            # without a REMOVED being logged).
+            for key in [k for k in open_span if k[0] == spell]:
+                open_span.pop(key)[1] = t
+            open_span[(spell, dst)] = [t, None]
+            windows[window].append(open_span[(spell, dst)])
+        elif window and ev == "SPELL_AURA_REMOVED":
+            if (spell, dst) in open_span:
+                open_span.pop((spell, dst))[1] = t
+            elif dst == guid and not windows[window]:  # buff already up when the pull started
+                windows[window].append([t0, t])
         if src != guid:
             continue
         if ev == "SPELL_CAST_START":
@@ -204,10 +211,13 @@ def analyze(enc, guid):
     if end - cursor > IDLE_THRESHOLD:
         gaps.append((cursor - t0, end - cursor))
     idle = sum(g for _, g in gaps)
-    for spans in windows.values():
-        for span in spans:
-            if span[1] is None:  # still up when the pull ended
-                span[1] = end
+    # Clip to what was analysed: nothing after death (a battle res would otherwise draw past the chart).
+    for name in list(windows):
+        windows[name] = [[a, min(b if b is not None else end, end)] for a, b in windows[name] if a < end]
+        if not windows[name]:
+            del windows[name]
+    for key in list(series):
+        series[key] = [(t, n) for t, n in series[key] if t <= end]
 
     return {
         "fight_len": fight_len,
