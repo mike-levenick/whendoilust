@@ -9,6 +9,7 @@ so it can be emailed or dropped in Discord and still work later. Stdlib only.
 import argparse
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -128,6 +129,11 @@ def main_player(report):
     return None
 
 
+def pct(part, whole):
+    """Whole percent, rounded half up like the page's Math.round (Python's round() is half-to-even)."""
+    return math.floor(100 * part / whole + 0.5) if whole else None
+
+
 def session_point(report):
     """One session's headline numbers for the trend chart, from a wowlog.py --json report (main player only).
     Raises KeyError/TypeError/AttributeError on a report that isn't wowlog output."""
@@ -154,28 +160,24 @@ def session_point(report):
         "bosses": sorted({str(p["boss"]) for p in pulls}),
         "pulls": len(pulls),
         "kills": sum(1 for p in pulls if p["result"] == "kill"),
-        "match": round(100 * matched / total) if total else None,
-        "idle": round(100 * idle / alive) if alive else None,
-        "cc_wasted": round(100 * wasted / gained) if gained else None,
-        "cpm": round(60 * casts / alive) if alive else None,
+        "match": pct(matched, total),
+        "idle": pct(idle, alive),
+        "cc_wasted": pct(wasted, gained),
+        "cpm": math.floor(60 * casts / alive + 0.5) if alive else None,
     }
 
 
-def same_session(a, b):
-    return a.get("log_started") == b.get("log_started") and \
-        [p.get("number") for p in a.get("pulls", [])] == [p.get("number") for p in b.get("pulls", [])]
-
-
 def history(report, folder):
-    """Trend points, oldest first: this report (marked current) plus every other wowlog.py --json report in `folder`
-    for the same player. Anything else in the folder (coaching files, other players, broken files, another copy of
-    this report) is skipped; a bad file never stops the report."""
+    """Trend points, oldest first: this report (marked current) plus the other wowlog.py --json reports in `folder`
+    for the same player, one point per log (a log analyzed twice, e.g. --last and then the whole session, keeps its
+    run with the most pulls; the log being rendered is always this report). Anything else in the folder (coaching
+    files, other players, broken files) is skipped; a bad file never stops the report."""
     try:
         names = sorted(os.listdir(folder))
     except OSError as e:
         raise SystemExit(f"Couldn't read the history folder {folder}: {e}")
     me = main_player(report)
-    points = [dict(session_point(report), current=True)]
+    by_log = {}
     for name in names:
         path = os.path.join(folder, name)
         if not name.endswith(".json") or name.endswith(".coaching.json") or not os.path.isfile(path):
@@ -185,11 +187,15 @@ def history(report, folder):
                 past = json.load(f)
             if not (isinstance(past, dict) and "schema" in past and isinstance(past.get("pulls"), list) and past["pulls"]):
                 continue
-            if main_player(past) != me or same_session(past, report):
+            if main_player(past) != me or past.get("log_started") == report.get("log_started"):
                 continue
-            points.append(session_point(past))
-        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+            point = session_point(past)
+        except Exception:  # unreadable, not wowlog output, or numbers no report has (Infinity): skip it
             continue
+        kept = by_log.get(point["started"])
+        if kept is None or point["pulls"] > kept["pulls"]:
+            by_log[point["started"]] = point
+    points = [dict(session_point(report), current=True), *by_log.values()]
     points.sort(key=lambda p: (p["started"], not p.get("current")))
     return points
 
@@ -246,8 +252,9 @@ def main():
         print(f"coaching: {p}", file=sys.stderr)
     if problems and args.strict:
         raise SystemExit(1)
+    page = render(report, coaching, history(report, args.history) if args.history else None)  # before truncating
     with open(args.output, "w", encoding="utf-8") as f:
-        f.write(render(report, coaching, history(report, args.history) if args.history else None))
+        f.write(page)
     print(os.path.abspath(args.output))
 
 

@@ -232,6 +232,18 @@ class CoachingCheck(unittest.TestCase):
                     code = e.code
             return code, err.getvalue(), os.path.exists(html)
 
+    def test_a_bad_history_folder_leaves_an_existing_report_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            rp, html = os.path.join(d, "r.json"), os.path.join(d, "r.html")
+            with open(rp, "w") as f:
+                json.dump(real_report(), f)
+            with open(html, "w") as f:
+                f.write("earlier report")
+            argv = ["report.py", rp, "-o", html, "--history", os.path.join(d, "missing")]
+            with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+                report.main()
+            self.assertEqual(open(html).read(), "earlier report")
+
     def test_strict_fails_without_writing_and_lenient_warns_and_writes(self):
         bad = coaching()
         bad["habits"][0]["moments"] = [{"pull": 1, "t": 30.0}]
@@ -286,6 +298,26 @@ class History(unittest.TestCase):
         points = report.history(current, folder)
         self.assertEqual([(p["date"], p["match"], p.get("current", False)) for p in points],
                          [("2026-10-08", 50, False), ("2026-10-10", 70, True), ("2026-10-12", 90, False)])
+
+    def test_one_point_per_log(self):
+        current = session("2026-10-10T19:00:00")
+        last_pull = session("2026-10-08T19:00:00", matched=1)
+        whole = session("2026-10-08T19:00:00", matched=8)
+        whole["pulls"] = whole["pulls"] * 3
+        rerun_of_current = dict(session("2026-10-10T19:00:00", matched=2), pulls=current["pulls"] * 2)
+        folder = self.folder({"a.json": last_pull, "b.json": whole, "c.json": rerun_of_current})
+        points = report.history(current, folder)
+        self.assertEqual([(p["date"], p["pulls"], p.get("current", False)) for p in points],
+                         [("2026-10-08", 3, False), ("2026-10-10", 1, True)])
+
+    def test_a_file_with_impossible_numbers_is_skipped(self):
+        bad = '{"schema": 1, "log_started": "2026-10-01T19:00:00", "pulls": [{"number": 1, "boss": "B", ' \
+              '"difficulty": "M+", "result": "kill", "players": [{"name": "Testmage-Realm-US", "time_alive": 1, ' \
+              '"casts": Infinity, "idle": {"total": 0}, "spec_checks": null}]}]}'
+        self.assertEqual(len(report.history(session("2026-10-10T19:00:00"), self.folder({"bad.json": bad}))), 1)
+
+    def test_percentages_round_half_up_like_the_page(self):
+        self.assertEqual(report.session_point(session("2026-10-10T19:00:00", matched=5, total=8))["match"], 63)
 
     def test_first_report_is_just_the_current_point(self):
         self.assertEqual(len(report.history(session("2026-10-10T19:00:00"), self.folder({}))), 1)

@@ -111,8 +111,9 @@ Write it to `$BASE.coaching.json`.
 "$PY" "$REPO/report.py" "$BASE.json" --coaching "$BASE.coaching.json" -o "$BASE.html" --strict --history "$OUT"
 ```
 
-`--history "$OUT"` adds a **Trend** section from the earlier reports in the folder (same character only;
-this run's own JSON is recognised and skipped). If the trend shows a clear change since the last report,
+`--history "$OUT"` adds a **Trend** section from the earlier reports in the folder (same character only,
+one point per log; this run's own JSON is recognised and skipped). The trend's numbers (dates, bosses, kill
+counts, four metrics per earlier session) are embedded in the HTML, so they travel with it when it's shared. If the trend shows a clear change since the last report,
 you may mention it in the headline, but name the content (raid vs M+), since those aren't directly comparable.
 
 `--strict` prints every `coaching:` problem and fails: a moment with nothing within 0.05s in that pull, a
