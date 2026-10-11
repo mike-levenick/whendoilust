@@ -431,10 +431,12 @@ def log_started(path):
 def newest_log(log_dir=None):
     """Newest combat log, also finding ones the Archon app moved to Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt."""
     override = log_dir or os.environ.get("WOWLOG_DIR")
-    dirs = [override] if override else LOG_DIRS
-    logs = [p for d in dirs for p in glob.glob(os.path.join(d, "**", "*WoWCombatLog*.txt"), recursive=True)]
+    dirs = [os.path.expanduser(override)] if override else LOG_DIRS
+    # escape: a folder like "D:\WoW [PTR]\Logs" must not be read as a glob pattern
+    logs = [p for d in dirs for p in glob.glob(os.path.join(glob.escape(d), "**", "*WoWCombatLog*.txt"), recursive=True)]
     if not logs:
-        raise SystemExit("No combat logs found. Looked in:\n  " + "\n  ".join(dirs) +
+        looked = [d if os.path.isdir(d) else f"{d} (does not exist)" for d in dirs]
+        raise SystemExit("No combat logs found. Looked in:\n  " + "\n  ".join(looked) +
                          "\nPass a log file, or the folder with --log-dir (or set WOWLOG_DIR).")
     return max(logs, key=log_started)
 
