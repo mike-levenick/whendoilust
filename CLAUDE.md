@@ -13,7 +13,9 @@ python3 wowlog.py --list                       # numbered pulls in the newest lo
 python3 wowlog.py --last --compare Zaffira     # most recent pull
 python3 wowlog.py --pull 13                    # a specific pull
 python3 wowlog.py --boss Sentinels             # all pulls of a boss
+python3 wowlog.py --last --json                # same report as JSON (schema 1), for the dashboard
 ```
+JSON: `{schema, log, log_started, pulls: [{number, boss, difficulty, result, start, duration, players: [{name, idle, abilities, failed_casts, spec_checks, timeline}]}]}`. Times are seconds from pull start. `timeline` has every cast with its state (charges, salvo, clearcasting, arcane_soul, cumulative_power, prismatic_bolt) and, for rotational casts, `expected`/`reason`/`matched` against the SimC priority. The text report is rendered from the same data (`summarize` → `print_report`).
 Logs: `/Applications/World of Warcraft/_retail_/Logs/WoWCombatLog-*.txt` (newest by the date in the filename is used by default; pass a path to override). The Archon uploader archives logs untouched for 3 days into `Logs/warcraftlogsarchive/Archive-WoWCombatLog-*.txt` (uncompressed, but mtime reset), and the script searches there too. Safe to run while the game is still logging. "Check last pull" from the user means run `--last --compare Zaffira` and summarize the rotation findings.
 
 ## Spec model (patch 12.1, Midnight Season 2) — verified from log + sources

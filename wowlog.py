@@ -7,8 +7,10 @@ Defaults to the newest WoWCombatLog in the retail Logs folder and the player fla
 import argparse
 import csv
 import glob
+import json
 import os
 import re
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 
@@ -227,9 +229,15 @@ def sunfury_choice(st, tom_ready):
     return "filler", "build with Blast/Orb"
 
 
-def report_arcane_sunfury(r, t0):
-    """Arcane Mage (Sunfury) checks: replay each GCD against the SimC priority (see sunfury_choice)."""
-    out = []
+def rnd(t):
+    return round(t, 3)  # the log has millisecond precision
+
+
+def check_arcane_sunfury(r, t0):
+    """Arcane Mage (Sunfury) checks: replay each GCD against the SimC priority (see sunfury_choice).
+
+    Returns (spec dict, {cast index: (expected, reason)}) so the timeline can be annotated.
+    """
     casts = r["casts"]
     tom_casts = [t for t, s, _ in casts if s == "Touch of the Magi"]
 
@@ -237,25 +245,25 @@ def report_arcane_sunfury(r, t0):
         prior = [x for x in tom_casts if x <= t]
         return not prior or t - prior[-1] >= 45
 
+    verdicts = {}
     mismatches = defaultdict(list)
     agree = total = 0
-    for t, spell, st in casts:
+    for i, (t, spell, st) in enumerate(casts):
         if spell not in ROTATIONAL:
             continue
         want, why = sunfury_choice(st, tom_ready(t))
         got = "filler" if spell in ("Arcane Blast", "Arcane Orb", "Arcane Pulse") else spell
+        verdicts[i] = (want, why, want == got)
         total += 1
         if want == got:
             agree += 1
         else:
-            mismatches[(want, spell)].append(f"{fmt_t(t - t0)} ({why})")
+            mismatches[(want, spell)].append({"t": rnd(t - t0), "reason": why})
 
     # Arcane Soul windows: what was pressed inside each
-    soul_casts = [(t, s, st) for t, s, st in casts if st.get("Arcane Soul", 0) and s in ROTATIONAL]
+    soul_casts = [(t, s) for t, s, st in casts if st.get("Arcane Soul", 0) and s in ROTATIONAL]
     windows = [t for t, e in r["auras"].get("Arcane Soul", []) if e == "SPELL_AURA_APPLIED"]
-    for w in windows:
-        inside = [s.replace("Arcane ", "") for t, s, _ in soul_casts if 0 <= t - w <= 4.5]
-        out.append(f"  Arcane Soul at {fmt_t(w - t0)}: {' > '.join(inside) or 'nothing cast'}")
+    soul = [{"t": rnd(w - t0), "casts": [s for t, s in soul_casts if 0 <= t - w <= 4.5]} for w in windows]
 
     # Clearcasting waste, split by whether Arcane Soul was up (soul Barrages generate CC, so some cap there is expected)
     cc_events = r["auras"].get("Clearcasting", [])
@@ -268,70 +276,145 @@ def report_arcane_sunfury(r, t0):
     in_soul = lambda t: any(a <= t <= b for a, b in soul_spans)
     gained = sum(1 for _, e in cc_events if e in ("SPELL_AURA_APPLIED", "SPELL_AURA_APPLIED_DOSE", "CAPPED"))
     capped = [t for t, e in cc_events if e == "CAPPED"]
-    capped_soul = sum(1 for t in capped if in_soul(t))
-    out.append(f"  Clearcasting: {gained} gained, {len(capped)} wasted at {CLEARCASTING_MAX} stacks "
-               f"({len(capped) - capped_soul} outside Arcane Soul, {capped_soul} during/just after Soul)")
+    clearcasting = {
+        "max_stacks": CLEARCASTING_MAX,
+        "gained": gained,
+        "wasted": [{"t": rnd(t - t0), "in_soul": in_soul(t)} for t in capped],
+    }
 
     # Arcane Salvo
     barrages = [st.get("Arcane Salvo", 0) for _, s, st in casts if s == "Arcane Barrage" and not st.get("Arcane Soul", 0)]
-    if barrages:
-        out.append(f"  Arcane Salvo at Barrage (outside Soul): avg {sum(barrages) / len(barrages):.0f}, "
-                   f"{sum(1 for b in barrages if b < 12)} of {len(barrages)} Barrages under 12 stacks")
-    hi = [(t, st) for t, s, st in casts if s == "Arcane Missiles" and st.get("Arcane Salvo", 0) >= 12
-          and not st.get("Arcane Soul", 0)]
-    hi_missiles = len(hi)
-    out.append(f"  Missiles started at 12+ Salvo (outside Soul): {hi_missiles} (priority: Barrage first at 4 charges, then Missiles)")
-    if hi:
-        out.append("        e.g. " + "; ".join(f"{fmt_t(t - t0)} Salvo {st.get('Arcane Salvo', 0)}, CC {st.get('Clearcasting', 0)}, "
-                                              f"~{st['_charges']} charges" for t, st in hi[:4]))
+    hi = [{"t": rnd(t - t0), "salvo": st.get("Arcane Salvo", 0), "clearcasting": st.get("Clearcasting", 0),
+           "charges": st["_charges"]}
+          for t, s, st in casts if s == "Arcane Missiles" and st.get("Arcane Salvo", 0) >= 12 and not st.get("Arcane Soul", 0)]
+    salvo = {
+        "barrages_outside_soul": len(barrages),
+        "avg_at_barrage": round(sum(barrages) / len(barrages), 1) if barrages else None,
+        "barrages_under_12": sum(1 for b in barrages if b < 12),
+        "missiles_at_12_plus": hi,
+    }
 
     alive = r["fight_len"]
+    cooldowns = []
     for name, cd in (("Touch of the Magi", 45), ("Arcane Surge", 90)):
         times = [t - t0 for t, s, _ in casts if s == name]
         possible = 1 + int(max(0, alive - (times[0] if times else 0)) // cd) if alive > 5 else 0
         drift = [b - a - cd for a, b in zip(times, times[1:]) if b - a - cd > 3]
-        line = f"  {name}: {len(times)}/{possible} possible uses" + (f", first at {fmt_t(times[0])}" if times else "")
-        if drift:
-            line += f", held {', '.join(f'{d:.0f}s' for d in drift)} past cooldown"
-        out.append(line)
+        cooldowns.append({"spell": name, "cooldown": cd, "uses": [rnd(t) for t in times], "possible": possible,
+                          "held_past_cooldown": [rnd(d) for d in drift]})
 
-    if total:
-        out.append(f"  Matched the SimC priority on {agree}/{total} rotational casts ({100 * agree / total:.0f}%)")
-        for (want, got), where in sorted(mismatches.items(), key=lambda kv: -len(kv[1])):
-            out.append(f"    {len(where):2d}x pressed {got}, priority says {want}")
-            out.append(f"        e.g. {'; '.join(where[:3])}")
+    priority = {
+        "matched": agree,
+        "total": total,
+        "mismatches": [{"expected": want, "pressed": got, "count": len(where), "casts": where}
+                       for (want, got), where in sorted(mismatches.items(), key=lambda kv: -len(kv[1]))],
+    }
+    spec = {"spec": "arcane_sunfury", "priority": priority, "arcane_soul": soul, "clearcasting": clearcasting,
+            "salvo": salvo, "cooldowns": cooldowns}
+    return spec, verdicts
+
+
+SPEC_CHECKS = {"Arcane Missiles": check_arcane_sunfury}  # crude spec detection by signature spell
+STATE_KEYS = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting", "Arcane Soul": "arcane_soul",
+              "Cumulative Power": "cumulative_power", "Prismatic Bolt!": "prismatic_bolt"}
+
+
+def summarize(enc, guid, name):
+    """Everything known about one player in one pull, as plain JSON-ready data. Times are seconds from pull start."""
+    r = analyze(enc, guid)
+    t0, alive = enc.start, r["fight_len"]
+    counts = Counter(s for _, s, _ in r["casts"])
+    rot = [c for c in r["casts"] if c[1] not in NON_ROTATIONAL]
+    spec, verdicts = None, {}
+    for spell, fn in SPEC_CHECKS.items():
+        if spell in counts:
+            spec, verdicts = fn(r, t0)
+    timeline = []
+    for i, (t, spell, st) in enumerate(r["casts"]):
+        entry = {"t": rnd(t - t0), "spell": spell,
+                 "state": {"charges": st["_charges"], **{k: st.get(a, 0) for a, k in STATE_KEYS.items()}}}
+        if i in verdicts:
+            want, why, ok = verdicts[i]
+            entry.update(expected=want, reason=why, matched=ok)
+        timeline.append(entry)
+    return {
+        "name": name,
+        "guid": guid,
+        "time_alive": rnd(alive),
+        "died_at": rnd(r["death"]) if r["death"] is not None else None,
+        "casts": len(rot),
+        "casts_per_minute": round(60 * len(rot) / alive, 1) if alive > 0 else None,
+        "idle": {"threshold": IDLE_THRESHOLD, "total": rnd(r["idle"]),
+                 "gaps": [{"t": rnd(at), "duration": rnd(d)} for at, d in r["gaps"]]},
+        "abilities": dict(counts.most_common()),
+        "failed_casts": [{"spell": s, "reason": why, "count": n} for (s, why), n in r["failed"].most_common()],
+        "spec_checks": spec,
+        "timeline": timeline,
+    }
+
+
+def print_report(label, p):
+    print(f"\n=== {label}  [{p['name'].split('-')[0]}]")
+    alive = p["time_alive"]
+    note = f" (you died at {p['died_at']:.0f}s)" if p["died_at"] is not None else ""
+    print(f"  Time alive in fight: {alive:.0f}s{note}")
+    if alive > 0:
+        print(f"  Casts: {p['casts']}  ({p['casts_per_minute']:.0f} per minute)")
+        print(f"  Idle time (gaps > {IDLE_THRESHOLD:.0f}s with nothing cast): {p['idle']['total']:.1f}s = {100 * p['idle']['total'] / alive:.0f}% of the fight")
+    for g in sorted(p["idle"]["gaps"], key=lambda g: -g["duration"])[:5]:
+        print(f"    - {g['duration']:4.1f}s gap at {fmt_t(g['t'])}")
+    print("  Ability usage:")
+    for spell, n in p["abilities"].items():
+        print(f"    {n:3d}  {spell}")
+    if p["spec_checks"]:
+        print("  Spec checks:")
+        for line in sunfury_lines(p["spec_checks"]):
+            print(line)
+    if p["failed_casts"]:
+        print("  Failed casts:")
+        for f in p["failed_casts"]:
+            print(f"    {f['count']}x {f['spell']}: {f['reason']}")
+
+
+def sunfury_lines(c):
+    out = []
+    for w in c["arcane_soul"]:
+        inside = [s.replace("Arcane ", "") for s in w["casts"]]
+        out.append(f"  Arcane Soul at {fmt_t(w['t'])}: {' > '.join(inside) or 'nothing cast'}")
+    cc = c["clearcasting"]
+    in_soul = sum(1 for w in cc["wasted"] if w["in_soul"])
+    out.append(f"  Clearcasting: {cc['gained']} gained, {len(cc['wasted'])} wasted at {cc['max_stacks']} stacks "
+               f"({len(cc['wasted']) - in_soul} outside Arcane Soul, {in_soul} during/just after Soul)")
+    sv = c["salvo"]
+    if sv["barrages_outside_soul"]:
+        out.append(f"  Arcane Salvo at Barrage (outside Soul): avg {sv['avg_at_barrage']:.0f}, "
+                   f"{sv['barrages_under_12']} of {sv['barrages_outside_soul']} Barrages under 12 stacks")
+    hi = sv["missiles_at_12_plus"]
+    out.append(f"  Missiles started at 12+ Salvo (outside Soul): {len(hi)} (priority: Barrage first at 4 charges, then Missiles)")
+    if hi:
+        out.append("        e.g. " + "; ".join(f"{fmt_t(m['t'])} Salvo {m['salvo']}, CC {m['clearcasting']}, "
+                                              f"~{m['charges']} charges" for m in hi[:4]))
+    for cd in c["cooldowns"]:
+        line = f"  {cd['spell']}: {len(cd['uses'])}/{cd['possible']} possible uses" + (f", first at {fmt_t(cd['uses'][0])}" if cd["uses"] else "")
+        if cd["held_past_cooldown"]:
+            line += f", held {', '.join(f'{d:.0f}s' for d in cd['held_past_cooldown'])} past cooldown"
+        out.append(line)
+    pr = c["priority"]
+    if pr["total"]:
+        out.append(f"  Matched the SimC priority on {pr['matched']}/{pr['total']} rotational casts ({100 * pr['matched'] / pr['total']:.0f}%)")
+        for m in pr["mismatches"]:
+            out.append(f"    {m['count']:2d}x pressed {m['pressed']}, priority says {m['expected']}")
+            examples = "; ".join(f"{fmt_t(x['t'])} ({x['reason']})" for x in m["casts"][:3])
+            out.append(f"        e.g. {examples}")
     return out
 
 
-SPEC_REPORTS = {"Arcane Missiles": report_arcane_sunfury}  # crude spec detection by signature spell
-
-
-def report(enc, guid, name):
-    r = analyze(enc, guid)
-    print(f"\n=== {enc.label}  [{name.split('-')[0]}]")
-    alive = r["fight_len"]
-    note = f" (you died at {r['death']:.0f}s)" if r["death"] is not None else ""
-    print(f"  Time alive in fight: {alive:.0f}s{note}")
-    rot = [c for c in r["casts"] if c[1] not in NON_ROTATIONAL]
-    if alive > 0:
-        print(f"  Casts: {len(rot)}  ({60 * len(rot) / alive:.0f} per minute)")
-        print(f"  Idle time (gaps > {IDLE_THRESHOLD:.0f}s with nothing cast): {r['idle']:.1f}s = {100 * r['idle'] / alive:.0f}% of the fight")
-    for at, dur in sorted(r["gaps"], key=lambda g: -g[1])[:5]:
-        print(f"    - {dur:4.1f}s gap at {int(at // 60)}:{at % 60:04.1f}")
-
-    counts = Counter(s for _, s, _ in r["casts"])
-    print("  Ability usage:")
-    for spell, n in counts.most_common():
-        print(f"    {n:3d}  {spell}")
-    for spell, fn in SPEC_REPORTS.items():
-        if spell in counts:
-            print("  Spec checks:")
-            for line in fn(r, enc.start):
-                print(line)
-    if r["failed"]:
-        print("  Failed casts:")
-        for (spell, why), n in r["failed"].most_common():
-            print(f"    {n}x {spell}: {why}")
+def pull_info(i, enc):
+    return {"number": i, "boss": enc.name, "encounter_id": int(enc.id),
+            "difficulty": DIFFICULTY.get(enc.difficulty, str(enc.difficulty)),
+            "result": {True: "kill", False: "wipe", None: "incomplete"}[enc.success],
+            "start": datetime.fromtimestamp(enc.start).isoformat(timespec="seconds"),
+            "duration": rnd(enc.duration), "label": enc.label}
 
 
 def log_started(path):
@@ -357,27 +440,34 @@ def main():
     ap.add_argument("--list", action="store_true", help="list encounters with their numbers and exit")
     ap.add_argument("--pull", type=int, action="append", help="only report pull number N (see --list); repeatable")
     ap.add_argument("--compare", action="append", default=[], help="also report this player, e.g. a same-spec raider")
+    ap.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
     args = ap.parse_args()
     path = args.logfile or newest_log()
     players = [find_player(path, args.player)] + [find_player(path, n) for n in args.compare]
-    print(f"Log: {os.path.basename(path)}")
-    encounters = [e for e in split_encounters(path) if e.duration > 5]
-    numbered = list(enumerate(encounters, 1))
+    numbered = list(enumerate((e for e in split_encounters(path) if e.duration > 5), 1))
     if args.list:
+        print(f"Log: {os.path.basename(path)}")
         for i, e in numbered:
             print(f"  #{i:<3} {datetime.fromtimestamp(e.start):%H:%M}  {e.label}")
         return
     if args.pull:
-        encounters = [e for i, e in numbered if i in args.pull]
+        numbered = [(i, e) for i, e in numbered if i in args.pull]
     if args.boss:
-        encounters = [e for e in encounters if args.boss.lower() in e.name.lower()]
+        numbered = [(i, e) for i, e in numbered if args.boss.lower() in e.name.lower()]
     if args.last:
-        encounters = encounters[-1:]
-    if not encounters:
+        numbered = numbered[-1:]
+    pulls = [dict(pull_info(i, e), players=[summarize(e, guid, name) for guid, name in players]) for i, e in numbered]
+    if args.json:
+        json.dump({"schema": 1, "log": os.path.basename(path), "log_started": log_started(path).isoformat(),
+                   "pulls": pulls}, sys.stdout, indent=1)
+        print()
+        return
+    print(f"Log: {os.path.basename(path)}")
+    if not pulls:
         print("No boss encounters in this log yet.")
-    for enc in encounters:
-        for guid, name in players:
-            report(enc, guid, name)
+    for pull in pulls:
+        for p in pull["players"]:
+            print_report(pull["label"], p)
 
 
 if __name__ == "__main__":
