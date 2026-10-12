@@ -129,6 +129,10 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 .habit .num { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
   border-radius: 50%; background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 13px; margin-bottom: 6px; }
 .habit { border-top: 3px solid var(--accent); }
+.diff { border-top: 3px solid var(--s1); }
+.diff dl { margin: 8px 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.diff dt { color: var(--muted); font-size: 13px; }
+.diff dd { margin: 0; overflow-wrap: break-word; }
 .chip { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .chip:hover { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
@@ -390,6 +394,17 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
           el("h3", {}, h.title || ""), dl, moments(h.moments)));
       });
       box.append(section("Work on", "warning", habits));
+    }
+    if ((coaching.differences || []).length) {
+      const g = el("div", { class: "habits" });
+      for (const h of coaching.differences) {
+        const dl = el("dl", {});
+        for (const [k, label] of [["you", "You"], ["top", "Top players"], ["takeaway", "Takeaway"]]) {
+          if (h[k]) dl.append(el("dt", {}, label), el("dd", {}, h[k]));
+        }
+        g.append(el("div", { class: "card diff" }, el("h3", {}, h.title || ""), dl, moments(h.moments)));
+      }
+      box.append(section("How the top players differ", null, g));
     }
     if ((coaching.tips || []).length) {
       box.append(section("Top tips for next pull", null,

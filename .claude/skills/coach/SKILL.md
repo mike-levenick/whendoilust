@@ -104,10 +104,13 @@ Read `$REPO/docs/coaching.md` and follow its format and writing rules exactly. T
 - **Up to 3 tips** ("Top tips for next pull"): one-line cues the player can remember mid-fight, usually the
   habits boiled down.
 - One or two sentences per pull in `pulls`, skipping pulls with nothing to say.
-- With a benchmark, use it: where the top players' numbers (`benchmarks[pull.benchmark].players`) differ from
-  the user's on the same boss (first Surge, idle, priority match, damage by spell), that is often the clearest
-  lever, and where top players also "break" the SimC priority, say so rather than calling it a mistake. Moments
-  can only cite the user's own pulls.
+- With a benchmark, write **up to 3 `differences`** ("How the top players differ"): compare the user with the
+  top players (`benchmarks[pull.benchmark].players`) boss by boss: cast counts per spell, damage by spell share,
+  first Arcane Surge, Touch uses, casts per minute, idle, priority match and which mismatch reasons each side
+  has. Lead with the gaps worth the most, give both sides' numbers, and say what to change. Where top players
+  also "break" the SimC priority, say so rather than calling it a mistake; where a gap may be gear or haste
+  (casts per minute, DPS), say that too. Moments can only cite the user's own pulls. Without a benchmark,
+  leave `differences` out.
 - `caveats` wherever a flagged cast may be correct: the analyzer assumes one target, so "Barrage, priority
   says filler" on add-heavy fights (most M+ bosses) can be right; Arcane Charges are approximate.
 - Rotation only, not deaths. Second person. Spec facts from the SimC `midnight` APL and Method.gg, never

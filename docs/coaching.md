@@ -26,6 +26,15 @@ report (see `check_coaching`).
       "moments": [{"pull": 4, "t": 102.2, "note": "optional one-line tooltip", "player": "optional name"}]
     }
   ],
+  "differences": [
+    {
+      "title": "What the top players do differently, e.g. 'They cast Prismatic Bolt three times as often on Avatar'",
+      "you": "What you did, with the numbers.",
+      "top": "What the top players did on the same boss, with their numbers.",
+      "takeaway": "What to change, or why it may not apply to you.",
+      "moments": [{"pull": 4, "t": 109.234, "note": "optional"}]
+    }
+  ],
   "tips": ["One-line reminder for the next pull.", "..."],
   "pulls": {"4": "1-2 sentences for pull #4."},
   "caveats": ["Where a flagged 'mistake' may be correct, or the data is thin."]
@@ -40,8 +49,12 @@ report (see `check_coaching`).
   shows what the habit says, so pick moments that genuinely do.
   `player` (a name prefix) is only for moments about a comparison player; the default is the main player.
   Moments must be in pulls whose `build.supported` is true. Each renders as a chip that jumps there.
-- The report shows the coaching in three sections: **What went well** (`strengths`), **Work on** (`habits`)
-  and **Top tips for next pull** (`tips`).
+- The report shows the coaching in sections: **What went well** (`strengths`), **Work on** (`habits`),
+  **How the top players differ** (`differences`) and **Top tips for next pull** (`tips`).
+- `differences`: **up to 3**, only when the report has `benchmarks` (`wowlog.py --benchmark`); `--strict`
+  rejects them otherwise. Compare like with like (the same boss), quote both sides' numbers from the JSON, and
+  rank by how much the gap is worth. Moments cite the user's own pulls. Where a gap may come from gear or
+  haste rather than play (casts per minute, DPS), say so.
 - `strengths`: **up to 3** things the player did well, best first, each with a `detail` grounded in the JSON
   and optional `moments` (checked exactly like habit moments). Real strengths only; skip the section rather
   than invent praise.

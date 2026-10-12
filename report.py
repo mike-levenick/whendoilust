@@ -75,7 +75,10 @@ def check_coaching(report, coaching):
         return next((pl for pl in players if pl["name"].lower().startswith(str(name).lower())), None)
 
     supported = [n for n, p in pulls.items() if (coached(p) or {}).get("build", {}).get("supported")]
-    for key, label, cap in (("habits", "habit", 3), ("strengths", "strength", 3)):
+    has_bench = any(isinstance(b, dict) and b.get("players") for b in (report.get("benchmarks") or {}).values())
+    if coaching.get("differences") and not has_bench:
+        problems.append("differences written but the report has no benchmark (run wowlog.py --benchmark)")
+    for key, label, cap in (("habits", "habit", 3), ("strengths", "strength", 3), ("differences", "difference", 3)):
         items = coaching.get(key, [])
         if not isinstance(items, list) or not all(isinstance(h, dict) for h in items):
             problems.append(f"{key} must be a list of objects")

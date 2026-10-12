@@ -141,6 +141,19 @@ class CoachingCheck(unittest.TestCase):
         self.assertIn("habit 1: nothing in pull #1 within 0.05s of t=None", problems)
         self.assertIn("pull note for #7, which isn't in this report", problems)
 
+    def test_differences_need_a_benchmark_and_grounded_moments(self):
+        c = coaching()
+        c["differences"] = [{"title": "x", "you": "y", "top": "z", "takeaway": "w", "moments": [{"pull": 1, "t": 30.0}]}]
+        r = real_report()
+        problems = report.check_coaching(r, c)
+        self.assertIn("differences written but the report has no benchmark (run wowlog.py --benchmark)", problems)
+        self.assertIn("difference 1: nothing in pull #1 within 0.05s of t=30.0", problems)
+        r["benchmarks"] = {"raid:9999:15": {"label": "x", "players": [r["pulls"][0]["players"][0]]}}
+        c["differences"][0]["moments"] = [{"pull": 1, "t": 4.0}]
+        self.assertEqual(report.check_coaching(r, c), [])
+        c["differences"] *= 4
+        self.assertIn("4 differences; the report shows the top 3 only", report.check_coaching(r, c))
+
     def test_strengths_and_tips_are_checked_like_habits(self):
         c = coaching()
         c["strengths"][0]["moments"] = [{"pull": 1, "t": 30.0}]
@@ -448,7 +461,12 @@ class Renders(unittest.TestCase):
                dict(me, name="Sneaky-Realm", benchmark={"url": "javascript:alert(1)", "region": "US"})]
         r["pulls"][0]["benchmark"] = "raid:9999:15"
         r["benchmarks"] = {"raid:9999:15": {"label": "Heroic Training Dummy", "players": top, "checked": 2}}
-        dom = self.render_dom(r)
+        c = coaching()
+        c["differences"] = [{"title": "They cast Bolt more", "you": "4 Bolts", "top": "13 Bolts", "takeaway": "Bolt at 8 CP"}]
+        self.assertEqual(report.check_coaching(r, c), [])
+        dom = self.render_dom(r, c)
+        self.assertIn("How the top players differ", dom)
+        self.assertIn("13 Bolts", dom)
         self.assertIn("You vs the top 2 Arcane Sunfury on Warcraft Logs", dom)
         self.assertIn('href="https://www.warcraftlogs.com/reports/AB#fight=3"', dom)
         self.assertNotIn("javascript:", dom)
