@@ -51,7 +51,8 @@ python3 report.py report.json --history ~/Documents/whendoilust-reports -o repor
 `--benchmark` needs a free Warcraft Logs API client: create one at
 <https://www.warcraftlogs.com/api/clients>, then put `WCL_CLIENT_ID=...` and `WCL_CLIENT_SECRET=...` in a `.env`
 file in this folder (it's git-ignored) or in your environment. Only public logs are read, and responses are
-cached in `~/.cache/whendoilust/wcl`.
+cached in `~/.cache/whendoilust/wcl`. A benchmarked report names the top players, links their public logs and
+includes their timelines, so keep that in mind when you share it.
 
 By default it reads the newest log in the retail `Logs` folder, including logs
 the Warcraft Logs / Archon uploader has moved to `Logs/warcraftlogsarchive/`,

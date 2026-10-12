@@ -24,6 +24,7 @@ MINE_FLAG = 0x511  # affiliation mine + reaction friendly + controlled by player
 GCD = 1.5          # base GCD; haste shrinks it, so gaps above this are a conservative "idle" measure
 IDLE_THRESHOLD = 2.0
 DIFFICULTY = {14: "Normal", 15: "Heroic", 16: "Mythic", 17: "LFR", 8: "M+"}
+MYTHIC_PLUS = 8
 POWER_ARCANE_CHARGES = 16
 SALVO_MAX = 25
 CLEARCASTING_MAX = 3
@@ -112,7 +113,8 @@ def split_encounters(path):
             owners.setdefault(f[5], f[1])  # GUIDs are per spawn; the first summon is the real one
         if ev == "ENCOUNTER_START":
             cur = Encounter(t, f)
-            cur.owners, cur.key = owners, key
+            # Only a Mythic+ boss belongs to the key (a raid after an abandoned key, with no END logged, doesn't).
+            cur.owners, cur.key = owners, key if cur.difficulty == MYTHIC_PLUS else None
             encounters.append(cur)
         elif ev == "ENCOUNTER_END" and cur:
             cur.end, cur.success = t, f[5] == "1"

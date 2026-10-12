@@ -347,6 +347,9 @@ class Benchmark(LogTest):
         lines = open(self.path).read().splitlines()
         key = '10/10/2026 19:59:00.000-5  CHALLENGE_MODE_START,"Temple of Sethraliss",1877,250,12,[9,10,147]'
         open(self.path, "w").write("\n".join([key] + lines) + "\n")
+        self.assertIsNone(json.loads(self.run_cli("--json"))["pulls"][0]["key"])  # a raid boss after an unfinished key
+        lines = [ln.replace(',15,20,1', ',8,5,1') for ln in lines]                  # now a Mythic+ boss
+        open(self.path, "w").write("\n".join([key] + lines) + "\n")
         mine = json.loads(self.run_cli("--json"))
         self.assertEqual(mine["pulls"][0]["key"], {"dungeon": "Temple of Sethraliss", "map_id": 1877, "level": 12})
         self.assertEqual(mine["benchmarks"], {})

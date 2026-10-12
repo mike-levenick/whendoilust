@@ -40,6 +40,23 @@ class WclError(Exception):
     pass
 
 
+class RateLimited(WclError):
+    """Stop the whole benchmark: every further request would fail too."""
+
+
+MAX_EVENT_PAGES = 50       # 10,000 events a page; a boss fight is a few pages at most
+MAX_RANKING_PAGES = 5      # 100 parses a page
+
+
+def write_private(path, data):
+    """Write JSON atomically, readable only by you (the cache holds an access token)."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
 def credentials():
     cid, secret = os.environ.get("WCL_CLIENT_ID"), os.environ.get("WCL_CLIENT_SECRET")
     path = os.path.join(HERE, ".env")
@@ -61,7 +78,7 @@ class Client:
     def __init__(self, cache_dir=None):
         self.cache = cache_dir or os.environ.get("WHENDOILUST_CACHE") or \
             os.path.join(os.path.expanduser("~"), ".cache", "whendoilust", "wcl")
-        os.makedirs(self.cache, exist_ok=True)
+        os.makedirs(self.cache, mode=0o700, exist_ok=True)
         self._token = None
 
     def token(self):
@@ -82,10 +99,12 @@ class Client:
         req = urllib.request.Request(TOKEN_URL, data=b"grant_type=client_credentials",
                                      headers={"Authorization": "Basic " + auth})
         data = self._send(req, "sign in to Warcraft Logs")
-        self._token = data["access_token"]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"token": self._token, "expires": time.time() + data.get("expires_in", 3600)}, f)
-        os.chmod(path, 0o600)
+        try:
+            self._token = data["access_token"]
+            expires = time.time() + float(data.get("expires_in", 3600))
+        except (KeyError, TypeError, ValueError):
+            raise WclError("Couldn't sign in to Warcraft Logs: no access token in the response")
+        write_private(path, {"token": self._token, "expires": expires})
         return self._token
 
     @staticmethod
@@ -95,7 +114,7 @@ class Client:
                 return json.load(r)
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                raise WclError("Warcraft Logs rate limit reached; try again in an hour (results so far are cached)")
+                raise RateLimited("Warcraft Logs rate limit reached; try again in an hour (results so far are cached)")
             raise WclError(f"Couldn't {what}: HTTP {e.code}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise WclError(f"Couldn't {what}: {e}")
@@ -116,11 +135,15 @@ class Client:
                                      headers={"Authorization": "Bearer " + self.token(),
                                               "Content-Type": "application/json"})
         data = self._send(req, "query Warcraft Logs")
+        if not isinstance(data, dict):
+            raise WclError("Warcraft Logs: unexpected response")
         if data.get("errors"):
-            raise WclError("Warcraft Logs: " + "; ".join(str(e.get("message")) for e in data["errors"]))
-        data = data["data"]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            raise WclError("Warcraft Logs: " + "; ".join(str(e.get("message")) for e in data["errors"]
+                                                         if isinstance(e, dict)))
+        data = data.get("data")
+        if not isinstance(data, dict):  # never cache an empty answer
+            raise WclError("Warcraft Logs: empty response")
+        write_private(path, data)
         return data
 
     # ---------- the queries the benchmark needs ----------
@@ -134,15 +157,20 @@ class Client:
 
     def events(self, code, fight_id, actor_id, start, end):
         """Every event involving the actor (as source or target, plus their pets) between start and end (ms)."""
-        out, cursor = [], start
-        while cursor is not None:
+        out, cursor, end = [], int(start), int(end)
+        for _ in range(MAX_EVENT_PAGES):
             q = (f'{{ reportData {{ report(code: {json.dumps(code)}) {{ events(fightIDs: [{int(fight_id)}], '
                  f'startTime: {cursor}, endTime: {end}, sourceID: {int(actor_id)}, includeResources: true, '
                  f'limit: 10000) {{ nextPageTimestamp data }} }} }} }}')
             page = self.query(q)["reportData"]["report"]["events"]
             out += page["data"]
-            cursor = page["nextPageTimestamp"]
-        return out
+            nxt = page.get("nextPageTimestamp")
+            if nxt is None:
+                return out
+            if int(nxt) <= cursor:
+                raise WclError("Warcraft Logs returned the same page of events twice")
+            cursor = int(nxt)
+        raise WclError(f"more than {MAX_EVENT_PAGES} pages of events for one fight")
 
 
 # ---------- translation ----------
@@ -160,9 +188,10 @@ def guid(actor, instance=None):
 
 def flags(actor, actors, me):
     """Unit flags as the combat log writes them; only 'mine' (0x511, 0x2111) and the friendly bit 0x10 matter.
-    A pet is friendly when a player owns it; an enemy's pet (an add summoned by the boss) is hostile."""
+    A pet is friendly when a player owns it; an enemy's pet (an add summoned by the boss) is hostile. An actor
+    WCL doesn't list is treated as friendly, so damage to it isn't counted."""
     if actor is None:
-        return "0x0"
+        return "0x10"
     if actor["id"] == me:
         return "0x511"
     if actor["type"] == "Player":
@@ -304,23 +333,29 @@ def top_players(client, enc, n, log=None):
     if not ranked_id or not difficulty:
         out["skipped"] = "no Warcraft Logs rankings for this content"
         return out
-    page = 1
-    while len(out["players"]) < n and out["checked"] < MAX_CANDIDATES * n:
+    for page in range(1, MAX_RANKING_PAGES + 1):
+        if len(out["players"]) >= n or out["checked"] >= MAX_CANDIDATES * n:
+            break
         ranks = rankings(client, ranked_id, difficulty, bracket, page)
-        for r in ranks.get("rankings") or []:
+        rows = ranks.get("rankings") or []
+        for r in rows:
             if len(out["players"]) >= n or out["checked"] >= MAX_CANDIDATES * n:
                 break
+            code = str((r.get("report") or {}).get("code", ""))
+            if r.get("hidden") or code.startswith("a:"):  # anonymous: the report can't be read
+                continue
             out["checked"] += 1
             try:
                 summary = parse_summary(client, r, int(enc.id))
-            except (WclError, KeyError, TypeError, ValueError) as e:
-                log(f"  skipped {r.get('name')}: {e}")
+            except RateLimited:
+                raise
+            except (WclError, KeyError, TypeError, ValueError, AttributeError) as e:
+                log(f"  skipped {r.get('name')!r}: {e}")
                 continue
             if summary:
                 out["players"].append(summary)
-        if not ranks.get("hasMorePages"):
+        if not rows or not ranks.get("hasMorePages"):
             break
-        page += 1
     log(f"Benchmark {label}: {len(out['players'])} Sunfury 4-piece parses from {out['checked']} checked")
     return out
 
@@ -358,16 +393,23 @@ def benchmarks(encounters, n, client=None, log=None):
     try:
         client = client or Client()
         credentials()
-    except WclError as e:
+    except (WclError, OSError) as e:
         log(f"Benchmark skipped: {e}")
         return out
+    stop = None
     for enc in encounters:
         k = bench_key(enc)
         if k in out:
             continue
+        if stop:
+            out[k] = {"source": "warcraftlogs", "label": enc.name, "players": [], "checked": 0, "skipped": stop}
+            continue
         try:
             out[k] = top_players(client, enc, n, log)
-        except WclError as e:
-            log(f"Benchmark for {enc.name} skipped: {e}")
-            out[k] = {"source": "warcraftlogs", "label": enc.name, "players": [], "checked": 0, "skipped": str(e)}
+        except (WclError, OSError, KeyError, TypeError, ValueError, AttributeError) as e:
+            msg = str(e) if isinstance(e, (WclError, OSError)) else f"unexpected response from Warcraft Logs ({e!r})"
+            log(f"Benchmark for {enc.name} skipped: {msg}")
+            out[k] = {"source": "warcraftlogs", "label": enc.name, "players": [], "checked": 0, "skipped": msg}
+            if isinstance(e, RateLimited):
+                stop = msg
     return out

@@ -396,6 +396,21 @@ class Cli(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(root, "docs", "coaching.md")))
 
 
+    def test_text_includes_the_benchmark(self):
+        r = real_report()
+        me = r["pulls"][0]["players"][0]
+        r["pulls"][0]["benchmark"] = "raid:9999:15"
+        r["benchmarks"] = {"raid:9999:15": {"label": "Heroic Training Dummy", "players": [dict(
+            me, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3", "region": "EU"})]}}
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "r.json")
+            json.dump(r, open(p, "w"))
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", ["report.py", p, "--text"]), contextlib.redirect_stdout(out):
+                report.main()
+        self.assertIn("vs the top 1 Arcane Sunfury on Warcraft Logs (Heroic Training Dummy)", out.getvalue())
+        self.assertIn("#1 Topmage-TarrenMill (EU)", out.getvalue())
+
     def test_reads_stdin_and_writes_the_output_file(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "r.html")
@@ -456,7 +471,10 @@ class Renders(unittest.TestCase):
     def test_benchmark_card_and_top_player_tabs(self):
         r = real_report()
         me = r["pulls"][0]["players"][0]
-        top = [dict(me, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3",
+        better = json.loads(json.dumps(me))
+        better["damage"]["dps"] *= 2                       # they out-damage you: your DPS cell is ▼ critical
+        better["idle"]["total"] = me["idle"]["total"] * 2  # they idle more: your idle cell is ▲ good
+        top = [dict(better, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3",
                                                                "region": "EU", "server": "Tarren Mill", "wcl_dps": 1}),
                dict(me, name="Sneaky-Realm", benchmark={"url": "javascript:alert(1)", "region": "US"})]
         r["pulls"][0]["benchmark"] = "raid:9999:15"
@@ -472,6 +490,11 @@ class Renders(unittest.TestCase):
         self.assertNotIn("javascript:", dom)
         self.assertIn("Top #1 Topmage", dom)
         self.assertIn("Top #2 Sneaky", dom)
+        rows = {m.group(1): m.group(2) for m in re.finditer(r"<tr><td>([^<]+)</td><td class=\"num\">(.*?)</td>", dom)}
+        self.assertIn('st-critical', rows["DPS"])
+        self.assertIn("▼", rows["DPS"])
+        self.assertIn('st-good', rows["Idle"])
+        self.assertIn("▲", rows["Idle"])
         r["pulls"][0]["benchmark"] = "missing"
         self.assertNotIn("You vs the top", self.render_dom(r))
 

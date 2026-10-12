@@ -494,6 +494,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
   }
 
   function jumpTo(number, t) {
+    playerIdx = 0;  // chips and deep links are about your own casts
     selectPull(number, t);
     try { history.replaceState(null, "", t == null ? `#pull-${number}` : `#pull-${number}@${t}`); } catch (e) { /* file:// in some browsers */ }
     $("pull").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -508,6 +509,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
     if (bench) wrap.append(benchCard(pull, bench));
     // The players you can open: everyone in your log, then the benchmark's top players (screen only).
     const viewable = [...pull.players, ...(bench && !printing ? bench.players : [])];
+    if (!printing) playerIdx = Math.min(playerIdx, viewable.length - 1);
     if (viewable.length > 1 && !printing) {
       const sw = el("div", { class: "tabs" });
       viewable.forEach((p, i) => sw.append(el("button", {
@@ -858,6 +860,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
   function openHash() {
     const m = /^#pull-(\d+)(?:@(\d+(?:\.\d+)?))?$/.exec(location.hash);
     if (!m || !pulls.some((p) => p.number === +m[1])) return false;
+    playerIdx = 0;
     selectPull(+m[1], m[2] == null ? null : +m[2]);
     requestAnimationFrame(() => $("pull").scrollIntoView({ block: "start" }));
     return true;
