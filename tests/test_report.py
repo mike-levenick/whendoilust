@@ -109,7 +109,9 @@ class SelfContained(unittest.TestCase):
     def test_template_loads_nothing_from_the_network(self):
         page = template()
         self.assertIn("default-src 'none'", page)  # Content-Security-Policy: the browser enforces it
-        self.assertEqual(set(re.findall(r'https?://[^\s"\'<>)]+', page)), {"http://www.w3.org/2000/svg"})
+        # The SVG namespace, and the prefix benchmark links must start with (links are navigation, not loads)
+        self.assertEqual(set(re.findall(r'https?://[^\s"\'<>)]+', page)),
+                         {"http://www.w3.org/2000/svg", "https://www.warcraftlogs.com/"})
         for pattern in (r"\bfetch\(", r"XMLHttpRequest", r"sendBeacon", r"WebSocket", r"EventSource", r"new Image",
                         r"\bimport\(", r"srcset", r"@font-face", r"@import", r"url\(", r"<(link|img|iframe|object|base|form)\b",
                         r"""(href|src|action|data|poster)\s*=\s*["']?(https?:)?//"""):
@@ -437,6 +439,23 @@ class Renders(unittest.TestCase):
         self.assertNotIn("<b>x</b>", dom)
         one = self.render_dom(r, None, trend[1:])
         self.assertIn("first report in the folder", one)
+
+    def test_benchmark_card_and_top_player_tabs(self):
+        r = real_report()
+        me = r["pulls"][0]["players"][0]
+        top = [dict(me, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3",
+                                                               "region": "EU", "server": "Tarren Mill", "wcl_dps": 1}),
+               dict(me, name="Sneaky-Realm", benchmark={"url": "javascript:alert(1)", "region": "US"})]
+        r["pulls"][0]["benchmark"] = "raid:9999:15"
+        r["benchmarks"] = {"raid:9999:15": {"label": "Heroic Training Dummy", "players": top, "checked": 2}}
+        dom = self.render_dom(r)
+        self.assertIn("You vs the top 2 Arcane Sunfury on Warcraft Logs", dom)
+        self.assertIn('href="https://www.warcraftlogs.com/reports/AB#fight=3"', dom)
+        self.assertNotIn("javascript:", dom)
+        self.assertIn("Top #1 Topmage", dom)
+        self.assertIn("Top #2 Sneaky", dom)
+        r["pulls"][0]["benchmark"] = "missing"
+        self.assertNotIn("You vs the top", self.render_dom(r))
 
     def test_hostile_text_still_renders(self):
         r = real_report()

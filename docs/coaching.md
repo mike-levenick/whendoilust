@@ -56,11 +56,14 @@ report (see `check_coaching`).
    estimated. If a number isn't in the data, don't state it.
 2. **Spec facts come from current-season sources**, not memory: the SimC APL on the `midnight` branch and
    the Method.gg Arcane guide. Mechanics change every patch.
-3. **Be honest about uncertainty.** The analyzer assumes a single target, so on add-heavy fights (most
+3. **Benchmarks are evidence too.** When the report has `benchmarks`, the top players' numbers on the same boss
+   are real data: cite them ("the top three had their first Surge by 1:08"). Top players don't match the SimC
+   priority 100% either, so a habit they share isn't a clear mistake.
+4. **Be honest about uncertainty.** The analyzer assumes a single target, so on add-heavy fights (most
    M+ bosses, raid add phases) "Barrage, priority says filler" can be correct AoE play. Arcane Charges
    are approximate. When a habit rests on that, say so in `caveats` rather than overstating it.
-4. **Rotation, not deaths.** Deaths are obvious to the player; don't coach them unless asked.
-5. **Plain language, second person, no jargon the player didn't use.** "You", not "the player".
-6. Only coach builds the report supports (`build.supported`, per pull). If no pull is supported, write a
+5. **Rotation, not deaths.** Deaths are obvious to the player; don't coach them unless asked.
+6. **Plain language, second person, no jargon the player didn't use.** "You", not "the player".
+7. Only coach builds the report supports (`build.supported`, per pull). If no pull is supported, write a
    headline saying spec coaching isn't available and leave `habits` empty; if some aren't, coach the rest
    and name the skipped pulls in `caveats`.

@@ -245,6 +245,9 @@ def main():
         for pull in report["pulls"]:
             for p in pull["players"]:
                 wowlog.print_report(pull["label"], p)
+            bench = (report.get("benchmarks") or {}).get(pull.get("benchmark"))
+            if bench and bench.get("players"):
+                wowlog.print_benchmark(pull["players"][0], bench)
         return
     coaching = load(args.coaching, "coaching") if args.coaching else None
     problems = check_coaching(report, coaching)
