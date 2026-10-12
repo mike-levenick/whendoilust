@@ -139,6 +139,13 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 .tips li::before { content: counter(tip); flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--accent);
   color: var(--on-accent); font-weight: 700; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
 .tabs button[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+.dmg { display: grid; gap: 8px; margin: 4px 0 0; }
+.dmg .row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.dmg .row span:last-child { color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dmg .pet { color: var(--muted); }
+.dmg .bar { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 3px; }
+.dmg .bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.stack { display: grid; gap: 16px; align-content: start; }
 .trend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .trend > * { min-width: 0; }
 .trend .value { font-size: 22px; font-weight: 600; }
@@ -245,6 +252,14 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
   const fmt = (t) => { const d = Math.round(t * 10); return `${Math.floor(d / 600)}:${((d % 600) / 10).toFixed(1).padStart(4, "0")}`; };
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
   const short = (name) => name.split("-")[0];
+  const big = (n) => { for (const [d, u] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) if (Math.abs(n) >= d) return `${(n / d).toFixed(1)}${u}`; return String(Math.round(n)); };
+  const DPS_WINDOW = 5;  // seconds, trailing average, matching wowlog.DPS_WINDOW
+  // DPS at each whole second: damage over the trailing DPS_WINDOW seconds (fewer at the very start).
+  function rollingDps(perSecond) {
+    const out = []; let sum = 0;
+    perSecond.forEach((v, i) => { sum += v; if (i >= DPS_WINDOW) sum -= perSecond[i - DPS_WINDOW]; out.push(sum / Math.min(i + 1, DPS_WINDOW)); });
+    return out;
+  }
 
   const me = (pull) => pull.players[0];
   const pulls = report.pulls;
@@ -259,12 +274,13 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 
   // ---------- session summary ----------
   function sessionStats() {
-    let matched = 0, total = 0, idle = 0, alive = 0, casts = 0, wasted = 0, gained = 0;
+    let matched = 0, total = 0, idle = 0, alive = 0, casts = 0, wasted = 0, gained = 0, dmg = 0, dur = 0;
     const cds = {};
     let supported = 0;
     for (const pull of pulls) {
       const p = me(pull);
       idle += p.idle.total; alive += p.time_alive; casts += p.casts;
+      if (p.damage) { dmg += p.damage.total; dur += pull.duration; }
       const c = p.spec_checks;
       if (!c) continue;
       supported++;
@@ -275,7 +291,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
         s.uses += cd.uses.length; s.possible += cd.possible;
       }
     }
-    return { matched, total, idle, alive, casts, wasted, gained, cds, supported };
+    return { matched, total, idle, alive, casts, wasted, gained, cds, supported, dmg, dur };
   }
 
   // Rough thresholds for the status colour of a number; the word and icon say the same thing as the colour.
@@ -318,6 +334,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
       tile("Idle time", `${pct(s.idle, s.alive)}%`, `${s.idle.toFixed(0)}s of ${s.alive.toFixed(0)}s alive`,
         s.alive ? grade.idle(100 * s.idle / s.alive) : null),
       tile("Casts per minute", s.alive ? (60 * s.casts / s.alive).toFixed(0) : "-"));
+    if (s.dmg) tiles.prepend(tile("DPS", big(s.dmg / s.dur), `${big(s.dmg)} damage over ${pulls.length} pull${pulls.length === 1 ? "" : "s"}`));
     if (s.supported) {
       tiles.append(tile("Clearcasting wasted", String(s.wasted), `outside Arcane Soul, of ${s.gained} gained`,
         grade.wasted(s.wasted, s.gained)));
@@ -492,6 +509,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
       tile("Idle time", `${pct(p.idle.total, p.time_alive)}%`, `${p.idle.total.toFixed(1)}s` +
         (p.died_at != null ? ` · died at ${fmt(p.died_at)}` : ""), p.time_alive ? grade.idle(100 * p.idle.total / p.time_alive) : null),
       tile("Casts per minute", p.casts_per_minute == null ? "-" : p.casts_per_minute.toFixed(0)));
+    if (p.damage && p.damage.total) t.prepend(tile("DPS", big(p.damage.dps), `${big(p.damage.total)} damage, pets included`));
     if (c) {
       const m = pct(c.priority.matched, c.priority.total), out = c.clearcasting.wasted.filter((w) => !w.in_soul).length;
       t.prepend(tile("Priority match", `${m}%`, `${c.priority.matched} of ${c.priority.total} casts`, c.priority.total ? grade.match(m) : null));
@@ -523,7 +541,9 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
     const end = Math.max(p.time_alive, 1), x = (t) => L + ((W - L - R) * t) / end;
     const c = p.spec_checks;
     const castRows = ROTATION.filter((s) => p.abilities[s]);
-    const rowH = 18, castTop = T, castH = castRows.length * rowH + rowH;  // + a "Cooldowns & other" row
+    const dps = p.damage && p.damage.total ? rollingDps(p.damage.per_second) : null;
+    const dpsTop = T, dpsH = dps ? 64 : 0;
+    const rowH = 18, castTop = dpsTop + (dps ? dpsH + 16 : 0), castH = castRows.length * rowH + rowH;  // + a "Cooldowns & other" row
     const salvoTop = castTop + castH + 16, salvoH = 52;
     const ccTop = salvoTop + salvoH + 16, ccH = 36;
     const winTop = ccTop + ccH + 16, winH = WINDOWS.length * 16;
@@ -551,6 +571,22 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 
     const label = (text, y) => { const n = svg("text", { x: 0, y, class: "lane-label", "dominant-baseline": "middle" });
       n.textContent = text; s.append(n); };
+
+    // DPS over time, with the cooldown windows shaded behind it
+    if (dps) {
+      const peak = Math.max(...dps.slice(0, Math.floor(end) + 1), 1), dy = (v) => dpsTop + dpsH - (dpsH * v) / peak;  // what the lane shows
+      label("DPS (5s avg)", dpsTop + dpsH / 2);
+      for (const [name, color] of WINDOWS.slice(0, 3)) for (const w of (p.windows || {})[name] || []) {
+        if (w.start > end) continue;
+        s.append(svg("rect", { x: x(w.start), y: dpsTop, width: Math.max(1, x(Math.min(w.end, end)) - x(w.start)), height: dpsH,
+          fill: color, "fill-opacity": 0.14 }));
+      }
+      let d = "";
+      dps.forEach((v, i) => { const t = Math.min(i + 0.5, end); if (i <= end) d += `${d ? "L" : "M"}${x(t)},${dy(v)}`; });
+      s.append(svg("path", { d, fill: "none", stroke: "--ink-2", "stroke-width": 1.5, "stroke-linejoin": "round" }));
+      s.append(svg("line", { x1: L, x2: W - R, y1: dy(0), y2: dy(0), stroke: "--grid", "stroke-width": 1 }));
+      const pk = svg("text", { x: L + 3, y: dpsTop + 10 }); pk.textContent = `${big(peak)} peak`; s.append(pk);
+    }
 
     // casts: one row per rotational spell, then everything else
     const rowOf = (spell) => { const i = castRows.indexOf(spell); return i < 0 ? castRows.length : i; };
@@ -625,7 +661,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
         for (const m of marks) if (Math.abs(m.x - px) < Math.abs(best.x - px)) best = m;
         const e = p.timeline[best.i];
         cross.setAttribute("x1", best.x); cross.setAttribute("x2", best.x); cross.setAttribute("visibility", "visible");
-        tip.replaceChildren(tipBody(e, p));
+        tip.replaceChildren(tipBody(e, p, dps));
         tip.style.display = "block";
         const host = document.documentElement.getBoundingClientRect();
         let left = clientX - host.left + 14, top = clientY - host.top + 14;
@@ -644,6 +680,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
       el("span", {}, el("i", { class: "mark-ok" }), "matched the priority"),
       el("span", {}, el("b", { class: "mark-bad" }, "✕"), "differed from the priority / wasted proc"),
       el("span", {}, el("i", { class: "sw", style: "background:var(--wash);outline:1px solid var(--ring)" }), "idle"),
+      el("span", {}, el("i", { class: "sw", style: "height:2px;background:var(--ink-2)" }), "DPS"),
       el("span", {}, el("i", { class: "sw", style: "height:2px;background:var(--violet)" }), "Arcane Salvo"),
       el("span", {}, el("i", { class: "sw", style: "height:2px;background:var(--magenta)" }), "Clearcasting"),
       ...WINDOWS.map(([n, col]) => el("span", {}, el("i", { class: "sw", style: `background:var(${col})` }), n)));
@@ -662,7 +699,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
     return svg("path", { d: d || "M0,0", fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round" });
   }
 
-  function tipBody(e, p) {
+  function tipBody(e, p, dps) {
     const frag = el("div", {});
     frag.append(el("div", { class: "t" }, `${fmt(e.t)}  ${e.spell}`));
     if (e.matched === false) frag.append(el("div", {}, el("strong", {}, `Priority: ${e.expected}`), ` - ${e.reason}`));
@@ -673,6 +710,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
     frag.append(row("Arcane Salvo", st.salvo, "var(--violet)"), row("Clearcasting", st.clearcasting, "var(--magenta)"),
       row("Arcane Charges (approx.)", st.charges));
     if (st.cumulative_power) frag.append(row("Cumulative Power", st.cumulative_power));
+    if (dps && dps.length) frag.append(row("DPS, last 5s", big(dps[Math.min(dps.length - 1, Math.floor(e.t))])));
     const up = WINDOWS.filter(([n]) => ((p.windows || {})[n] || []).some((w) => w.start <= e.t && e.t <= w.end));
     if (up.length) frag.append(el("div", { class: "muted" }, `Up: ${up.map(([n]) => n).join(", ")}`));
     return frag;
@@ -705,15 +743,29 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
         left.append(more);
       }
     }
-    const right = el("div", { class: "card" }, el("h3", {}, "Ability usage"));
+    const right = el("div", { class: "stack" });
+    if (p.damage && p.damage.total) {
+      const list = el("div", { class: "dmg" }), top = p.damage.by_spell[0].amount;
+      for (const d of p.damage.by_spell.slice(0, 10)) {
+        list.append(el("div", {},
+          el("div", { class: "row" }, el("span", {}, d.spell, d.pet ? el("span", { class: "pet" }, ` (${d.pet})`) : null),
+            el("span", {}, `${big(d.amount)} · ${pct(d.amount, p.damage.total)}%`)),
+          el("div", { class: "bar" }, el("span", { style: `width:${(100 * d.amount / top).toFixed(1)}%` }))));
+      }
+      right.append(el("div", { class: "card" }, el("h3", {}, "Damage by spell"), list,
+        p.damage.by_spell.length > 10 ? el("p", { class: "muted", style: "margin:8px 0 0;font-size:13px" },
+          `+ ${p.damage.by_spell.length - 10} more`) : null));
+    }
+    const usage = el("div", { class: "card" }, el("h3", {}, "Ability usage"));
+    right.append(usage);
     const ab = el("tbody", {});
     for (const [sp, n] of Object.entries(p.abilities)) ab.append(el("tr", {}, el("td", { class: "num" }, n), el("td", {}, sp)));
-    right.append(el("table", {}, ab));
+    usage.append(el("table", {}, ab));
     if (p.failed_casts.length) {
       const fc = el("tbody", {});
       for (const f of p.failed_casts) fc.append(el("tr", {}, el("td", { class: "num" }, `${f.count}x`),
         el("td", {}, `${f.spell}: ${f.reason}`)));
-      right.append(el("details", {}, el("summary", {}, `Failed casts (${p.failed_casts.length})`), el("table", {}, fc)));
+      usage.append(el("details", {}, el("summary", {}, `Failed casts (${p.failed_casts.length})`), el("table", {}, fc)));
     }
     cols.append(left, right);
     return cols;

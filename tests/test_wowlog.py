@@ -256,6 +256,90 @@ class BuildGate(LogTest):
         self.assertEqual((other_p["build"]["spec_name"], other_p["build"]["unsupported_reason"]), ("Fire", "not_arcane"))
 
 
+PET = 'Creature-0-1-1-1-31216-0000000009,"Mirror Image",0x2111,0x80000000'
+PHOENIX = 'Creature-0-1-1-1-223453-0000000008,"Arcane Phoenix",0x2111,0x80000000'
+PAL = 'Player-1-00000003,"Paladin-Realm-US",0x512,0x80000000'
+
+
+def hit(src, dst, name, amount, absorbed=0, crit=False, event="SPELL_DAMAGE"):
+    """A damage line laid out like a real 12.x advanced log (42 fields)."""
+    return (f'{event},{src},{dst},1,"{name}",0x40,Creature-0-1-1-1-1-0000000001,0000000000000000,'
+            f'100,100,0,0,1470,0,0,0,1,0,0,0,0.00,0.00,1038,0.0,90,'
+            f'{amount},{amount},-1,64,0,0,{absorbed},{"1" if crit else "nil"},nil,nil,ST')
+
+
+GUARDIAN = 'Creature-0-1-1-1-99999-0000000007,"Spark",0x2111,0x80000000'
+LOOP_A = 'Creature-0-1-1-1-99998-0000000005,"A",0xa48,0x80000000'
+LOOP_B = 'Creature-0-1-1-1-99997-0000000006,"B",0xa48,0x80000000'
+
+
+def swing(src, dst, amount, crit=False):
+    """A melee line as 12.x logs it: no spell fields and no trailing ST/AOE (38 fields)."""
+    return (f'SWING_DAMAGE,{src},{dst},Creature-0-1-1-1-1-0000000001,0000000000000000,'
+            f'100,100,0,0,1470,0,0,0,1,0,0,0,0.00,0.00,1038,0.0,90,'
+            f'{amount},{amount},-1,1,0,0,0,{"1" if crit else "nil"},nil,nil')
+
+
+class Damage(LogTest):
+    def write(self, body, before=()):
+        """Like write_log, with lines before ENCOUNTER_START (e.g. a pre-pull summon)."""
+        write_log(self.path, body)
+        lines = open(self.path).read().splitlines()
+        pre = [f"10/10/2026 19:59:{59 - i:06.3f}-5  {text}" for i, text in enumerate(before)]
+        open(self.path, "w").write("\n".join(pre + lines) + "\n")
+
+    def test_player_and_pet_damage_is_counted_once(self):
+        self.write([
+            (2.0, hit(ME, BOSS, "Arcane Barrage", 1000, absorbed=200, crit=True)),
+            (2.5, hit(ME, BOSS, "Arcane Missiles", 300, event="SPELL_PERIODIC_DAMAGE")),
+            (3.2, f'SPELL_MISSED,{ME},{BOSS},1,"Arcane Barrage",0x40,ABSORB,nil,500,500,nil,ST'),
+            (3.3, f'SPELL_MISSED,{ME},{BOSS},1,"Arcane Missiles",0x40,IMMUNE,nil,AOE'),
+            (4.0, hit(ME, ME, "Refraction", 9999)),                       # damage to yourself
+            (4.1, hit(PAL, BOSS, "Judgment", 9999)),                      # someone else
+            (5.0, hit(PET, BOSS, "Frostbolt", 50)),                       # summoned before the pull
+            (6.0, f"SPELL_SUMMON,{ME},{PHOENIX},448659,\"Arcane Phoenix\",0x44"),
+            (6.5, hit(PHOENIX, BOSS, "Arcane Barrage", 70)),               # same spell name as yours
+            (7.0, "SPELL_DAMAGE,Player-1-00000001,trunc"),                # a line still being written
+        ], before=[f"SPELL_SUMMON,{ME},{PET},321686,\"Mirror Image\",0x1"])
+        d = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]["damage"]
+        self.assertEqual(d["total"], 1200 + 300 + 500 + 50 + 70)
+        self.assertEqual(d["dps"], round(2120 / 60))
+        self.assertEqual(d["by_spell"], [
+            {"spell": "Arcane Barrage", "pet": None, "amount": 1700, "hits": 2, "crits": 1},
+            {"spell": "Arcane Missiles", "pet": None, "amount": 300, "hits": 1, "crits": 0},
+            {"spell": "Arcane Barrage", "pet": "Arcane Phoenix", "amount": 70, "hits": 1, "crits": 0},
+            {"spell": "Frostbolt", "pet": "Mirror Image", "amount": 50, "hits": 1, "crits": 0},
+        ])
+        self.assertEqual(len(d["per_second"]), 61)
+        self.assertEqual(d["per_second"][2:7], [1500, 500, 0, 50, 70])
+        self.assertIn("Damage: 2.1K total, 35 DPS  (Arcane Barrage 80%", self.run_cli())
+
+    def test_melee_summon_chains_and_short_lines(self):
+        self.write([
+            (2.0, swing(PET, BOSS, 400, crit=True)),
+            (2.1, f"SWING_MISSED,{PET},{BOSS},ABSORB,nil,25,25,nil"),
+            (3.0, f"SPELL_SUMMON,{PET},{GUARDIAN},1,\"Spark\",0x1"),     # the pet's own summon
+            (3.1, hit(GUARDIAN, BOSS, "Zap", 10)),
+            (4.0, f"SPELL_SUMMON,{GUARDIAN},{GUARDIAN},1,\"Again\",0x1"),  # doesn't change who owns it
+            (4.1, hit(GUARDIAN, BOSS, "Zap", 10)),
+            (4.2, f"SPELL_SUMMON,{LOOP_A},{LOOP_B},1,\"B\",0x1"),
+            (4.3, f"SPELL_SUMMON,{LOOP_B},{LOOP_A},1,\"A\",0x1"),         # a cycle must not hang
+            (4.4, hit(LOOP_A, BOSS, "Not mine", 10)),
+            (5.0, f'SPELL_DAMAGE,{ME},{BOSS},1,"Arcane Blast",0x40,5000,5000,-1,64,0,0,0,nil,nil,nil,ST'),  # no advanced logging
+        ], before=[f"SPELL_SUMMON,{ME},{PET},321686,\"Mirror Image\",0x1"])
+        d = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]["damage"]
+        self.assertEqual(d["by_spell"], [
+            {"spell": "Melee", "pet": "Mirror Image", "amount": 425, "hits": 2, "crits": 1},
+            {"spell": "Zap", "pet": "Spark", "amount": 20, "hits": 2, "crits": 0},
+        ])
+
+    def test_no_damage(self):
+        self.write([(1.5, cast(5143, "Arcane Missiles"))])
+        d = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]["damage"]
+        self.assertEqual((d["total"], d["dps"], d["by_spell"], sum(d["per_second"])), (0, 0, [], 0))
+        self.assertNotIn("Damage:", self.run_cli())
+
+
 class NewestLog(unittest.TestCase):
     def setUp(self):
         # Hermetic: a WOWLOG_DIR on the developer's or CI machine must not leak in.

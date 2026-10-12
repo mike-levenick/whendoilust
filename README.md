@@ -3,7 +3,8 @@
 A rotation coach for **Arcane Mage (Sunfury, Midnight Season 2 4-piece)** built
 from World of Warcraft advanced combat logs. It replays every cast against the
 SimulationCraft priority list and reports wasted procs, downtime, cooldown
-timing, and where your button presses differed from the priority.
+timing, and where your button presses differed from the priority, alongside
+your damage (DPS over time, damage by spell, pets included).
 
 > Work in progress; see the
 > [v1 milestone](https://github.com/mike-levenick/whendoilust/milestone/1).

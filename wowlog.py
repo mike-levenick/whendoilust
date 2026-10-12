@@ -36,6 +36,16 @@ WINDOW_BUFFS = {"Arcane Surge": "Arcane Surge", "Arcane Soul": "Arcane Soul", "B
 WINDOW_DEBUFFS = {"Touch of the Magi": "Touch of the Magi"}
 SERIES = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting"}  # stack counts over time
 
+# Damage done: hits and fully absorbed misses. Fields are counted from the front: the 9 source/target fields, the
+# 3 spell fields (absent on SWING_*), then 19 advanced-log fields, then amount, base, overkill, school, resisted,
+# blocked, absorbed, critical. The tail after that differs (spells add ST/AOE, swings don't).
+# SWING_DAMAGE_LANDED repeats SWING_DAMAGE, so it isn't counted.
+ADVANCED_FIELDS = 19
+DAMAGE_EVENTS = {"SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE", "RANGE_DAMAGE", "SWING_DAMAGE"}
+MISSED_EVENTS = {"SPELL_MISSED", "SPELL_PERIODIC_MISSED", "RANGE_MISSED", "SWING_MISSED"}
+REACTION_FRIENDLY = 0x10  # on the target: damage to yourself or allies (e.g. Refraction) isn't damage done
+DPS_WINDOW = 5  # seconds; the DPS-over-time series is a trailing average over this many 1s buckets
+
 # Spells that aren't part of the damage rotation, excluded from "casts" accounting.
 NON_ROTATIONAL = {"Arcane Intellect", "Freightrunner's Flask"}
 
@@ -70,6 +80,7 @@ class Encounter:
         self.end = None
         self.success = None
         self.events = []
+        self.owners = {}  # pet/guardian GUID -> summoner GUID, log-wide (shared by every encounter)
 
     @property
     def label(self):
@@ -85,10 +96,14 @@ class Encounter:
 
 def split_encounters(path):
     encounters, cur = [], None
+    owners = {}  # every summon in the log, so a pet summoned before the pull still counts
     for t, f in read_events(path):
         ev = f[0]
+        if ev == "SPELL_SUMMON" and len(f) > 5:
+            owners.setdefault(f[5], f[1])  # GUIDs are per spawn; the first summon is the real one
         if ev == "ENCOUNTER_START":
             cur = Encounter(t, f)
+            cur.owners = owners
             encounters.append(cur)
         elif ev == "ENCOUNTER_END" and cur:
             cur.end, cur.success = t, f[5] == "1"
@@ -114,6 +129,35 @@ def find_player(path, name=None):
     raise SystemExit(f"Couldn't find {name or 'your character'} in this log.")
 
 
+def owner(guid_, owners):
+    """The player at the top of a summon chain (a pet's pet resolves to the player)."""
+    seen = set()
+    while guid_ in owners and guid_ not in seen:
+        seen.add(guid_)
+        guid_ = owners[guid_]
+    return guid_
+
+
+def damage_done(f):
+    """(amount, crit, spell name) for a damage event or a fully absorbed miss, or None (including lines from a log
+    without Advanced Combat Logging, which are too short)."""
+    ev, has_spell = f[0], not f[0].startswith("SWING")
+    base = 12 if has_spell else 9
+    try:
+        if ev in DAMAGE_EVENTS:
+            at = base + ADVANCED_FIELDS
+            if len(f) < at + 8:
+                return None
+            return int(f[at]) + int(f[at + 6]), f[at + 7] == "1", f[10] if has_spell else "Melee"
+        if ev in MISSED_EVENTS:
+            at = base  # missType, then isOffHand, then the amount
+            if f[at] == "ABSORB":
+                return int(f[at + 2]), False, f[10] if has_spell else "Melee"
+    except (IndexError, ValueError):  # a line still being written, or a layout we don't know
+        return None
+    return None
+
+
 def analyze(enc, guid):
     t0 = enc.start
     casts = []            # (t, spell, state snapshot at cast time)
@@ -132,6 +176,8 @@ def analyze(enc, guid):
     open_span = {}                     # (spell, target) -> open [start, None] span; two lusts don't collide
     window_spells = set()              # spells that already have a span (so a REMOVED isn't a pre-pull buff)
     series = defaultdict(list)         # SERIES key -> [(t, stacks)]
+    damage = defaultdict(lambda: [0, 0, 0])   # (spell, pet name or None) -> [amount, hits, crits]
+    per_second = Counter()             # whole seconds from pull start -> damage
 
     for t, f in enc.events:
         ev = f[0]
@@ -174,6 +220,17 @@ def analyze(enc, guid):
             elif dst == guid and spell not in window_spells:  # buff already up when the pull started
                 windows[window].append([t0, t])
                 window_spells.add(spell)
+        if (ev in DAMAGE_EVENTS or ev in MISSED_EVENTS) and src and (src == guid or owner(src, enc.owners) == guid):
+            dmg = damage_done(f)
+            try:
+                hostile = not int(f[7], 16) & REACTION_FRIENDLY
+            except (IndexError, ValueError):
+                hostile = False
+            if dmg and hostile:
+                amount, crit, name = dmg
+                d = damage[(name, None if src == guid else f[2])]
+                d[0] += amount; d[1] += 1; d[2] += crit
+                per_second[int(t - t0)] += amount
         if src != guid:
             continue
         if ev == "SPELL_CAST_START":
@@ -237,6 +294,8 @@ def analyze(enc, guid):
         "salvo_capped_hits": salvo_capped_hits,
         "windows": windows,
         "series": series,
+        "damage": damage,
+        "per_second": per_second,
     }
 
 
@@ -494,7 +553,22 @@ def summarize(enc, guid, name, build, checks):
         "windows": {name: [{"start": rnd(a - t0), "end": rnd(b - t0)} for a, b in spans]
                     for name, spans in sorted(r["windows"].items())},
         "series": {key: [[rnd(t - t0), n] for t, n in points] for key, points in sorted(r["series"].items())},
+        "damage": damage_summary(r, enc.duration),
         "timeline": timeline,
+    }
+
+
+def damage_summary(r, duration):
+    """Damage done by the player and their pets: total, DPS over the whole pull (as Warcraft Logs divides it),
+    per spell, and damage in each whole second from the pull start."""
+    total = sum(d[0] for d in r["damage"].values())
+    seconds = max(int(duration) + 1, max(r["per_second"], default=-1) + 1)
+    return {
+        "total": total,
+        "dps": round(total / duration) if duration > 0 else None,
+        "by_spell": [{"spell": spell, "pet": pet, "amount": a, "hits": h, "crits": c}
+                     for (spell, pet), (a, h, c) in sorted(r["damage"].items(), key=lambda kv: -kv[1][0])],
+        "per_second": [r["per_second"].get(i, 0) for i in range(seconds)],
     }
 
 
@@ -509,6 +583,11 @@ def print_report(label, p):
         print(f"  Idle time (gaps > {IDLE_THRESHOLD:.0f}s with nothing cast): {p['idle']['total']:.1f}s = {100 * p['idle']['total'] / alive:.0f}% of the fight")
     for g in sorted(p["idle"]["gaps"], key=lambda g: -g["duration"])[:5]:
         print(f"    - {g['duration']:4.1f}s gap at {fmt_t(g['t'])}")
+    d = p["damage"]
+    if d["total"]:
+        top = ", ".join(f"{s['spell']}{' (' + s['pet'] + ')' if s['pet'] else ''} {100 * s['amount'] / d['total']:.0f}%"
+                        for s in d["by_spell"][:4])
+        print(f"  Damage: {short_number(d['total'])} total, {short_number(d['dps'] or 0)} DPS  ({top})")
     print("  Ability usage:")
     for spell, n in p["abilities"].items():
         print(f"    {n:3d}  {spell}")
@@ -520,6 +599,13 @@ def print_report(label, p):
         print("  Failed casts:")
         for f in p["failed_casts"]:
             print(f"    {f['count']}x {f['spell']}: {f['reason']}")
+
+
+def short_number(n):
+    for div, unit in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(n) >= div:
+            return f"{n / div:.1f}{unit}"
+    return str(n)
 
 
 def sunfury_lines(c):
