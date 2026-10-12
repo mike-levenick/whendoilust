@@ -36,8 +36,11 @@ WINDOW_BUFFS = {"Arcane Surge": "Arcane Surge", "Arcane Soul": "Arcane Soul", "B
 WINDOW_DEBUFFS = {"Touch of the Magi": "Touch of the Magi"}
 SERIES = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting"}  # stack counts over time
 
-# Damage done: hits (amount 11th from the end, absorbed 5th, crit flag 4th) and fully absorbed misses.
+# Damage done: hits and fully absorbed misses. Fields are counted from the front: the 9 source/target fields, the
+# 3 spell fields (absent on SWING_*), then 19 advanced-log fields, then amount, base, overkill, school, resisted,
+# blocked, absorbed, critical. The tail after that differs (spells add ST/AOE, swings don't).
 # SWING_DAMAGE_LANDED repeats SWING_DAMAGE, so it isn't counted.
+ADVANCED_FIELDS = 19
 DAMAGE_EVENTS = {"SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE", "RANGE_DAMAGE", "SWING_DAMAGE"}
 MISSED_EVENTS = {"SPELL_MISSED", "SPELL_PERIODIC_MISSED", "RANGE_MISSED", "SWING_MISSED"}
 REACTION_FRIENDLY = 0x10  # on the target: damage to yourself or allies (e.g. Refraction) isn't damage done
@@ -97,7 +100,7 @@ def split_encounters(path):
     for t, f in read_events(path):
         ev = f[0]
         if ev == "SPELL_SUMMON" and len(f) > 5:
-            owners[f[5]] = f[1]
+            owners.setdefault(f[5], f[1])  # GUIDs are per spawn; the first summon is the real one
         if ev == "ENCOUNTER_START":
             cur = Encounter(t, f)
             cur.owners = owners
@@ -136,13 +139,18 @@ def owner(guid_, owners):
 
 
 def damage_done(f):
-    """(amount, crit, spell name) for a damage event or a fully absorbed miss, or None."""
+    """(amount, crit, spell name) for a damage event or a fully absorbed miss, or None (including lines from a log
+    without Advanced Combat Logging, which are too short)."""
     ev, has_spell = f[0], not f[0].startswith("SWING")
+    base = 12 if has_spell else 9
     try:
         if ev in DAMAGE_EVENTS:
-            return int(f[-11]) + int(f[-5]), f[-4] == "1", f[10] if has_spell else "Melee"
+            at = base + ADVANCED_FIELDS
+            if len(f) < at + 8:
+                return None
+            return int(f[at]) + int(f[at + 6]), f[at + 7] == "1", f[10] if has_spell else "Melee"
         if ev in MISSED_EVENTS:
-            at = 12 if has_spell else 9  # missType, then isOffHand, then the amount
+            at = base  # missType, then isOffHand, then the amount
             if f[at] == "ABSORB":
                 return int(f[at + 2]), False, f[10] if has_spell else "Melee"
     except (IndexError, ValueError):  # a line still being written, or a layout we don't know
@@ -579,7 +587,7 @@ def print_report(label, p):
     if d["total"]:
         top = ", ".join(f"{s['spell']}{' (' + s['pet'] + ')' if s['pet'] else ''} {100 * s['amount'] / d['total']:.0f}%"
                         for s in d["by_spell"][:4])
-        print(f"  Damage: {short_number(d['total'])} total, {short_number(d['dps'])} DPS  ({top})")
+        print(f"  Damage: {short_number(d['total'])} total, {short_number(d['dps'] or 0)} DPS  ({top})")
     print("  Ability usage:")
     for spell, n in p["abilities"].items():
         print(f"    {n:3d}  {spell}")

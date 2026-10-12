@@ -268,6 +268,18 @@ def hit(src, dst, name, amount, absorbed=0, crit=False, event="SPELL_DAMAGE"):
             f'{amount},{amount},-1,64,0,0,{absorbed},{"1" if crit else "nil"},nil,nil,ST')
 
 
+GUARDIAN = 'Creature-0-1-1-1-99999-0000000007,"Spark",0x2111,0x80000000'
+LOOP_A = 'Creature-0-1-1-1-99998-0000000005,"A",0xa48,0x80000000'
+LOOP_B = 'Creature-0-1-1-1-99997-0000000006,"B",0xa48,0x80000000'
+
+
+def swing(src, dst, amount, crit=False):
+    """A melee line as 12.x logs it: no spell fields and no trailing ST/AOE (38 fields)."""
+    return (f'SWING_DAMAGE,{src},{dst},Creature-0-1-1-1-1-0000000001,0000000000000000,'
+            f'100,100,0,0,1470,0,0,0,1,0,0,0,0.00,0.00,1038,0.0,90,'
+            f'{amount},{amount},-1,1,0,0,0,{"1" if crit else "nil"},nil,nil')
+
+
 class Damage(LogTest):
     def write(self, body, before=()):
         """Like write_log, with lines before ENCOUNTER_START (e.g. a pre-pull summon)."""
@@ -301,6 +313,25 @@ class Damage(LogTest):
         self.assertEqual(len(d["per_second"]), 61)
         self.assertEqual(d["per_second"][2:7], [1500, 500, 0, 50, 70])
         self.assertIn("Damage: 2.1K total, 35 DPS  (Arcane Barrage 80%", self.run_cli())
+
+    def test_melee_summon_chains_and_short_lines(self):
+        self.write([
+            (2.0, swing(PET, BOSS, 400, crit=True)),
+            (2.1, f"SWING_MISSED,{PET},{BOSS},ABSORB,nil,25,25,nil"),
+            (3.0, f"SPELL_SUMMON,{PET},{GUARDIAN},1,\"Spark\",0x1"),     # the pet's own summon
+            (3.1, hit(GUARDIAN, BOSS, "Zap", 10)),
+            (4.0, f"SPELL_SUMMON,{GUARDIAN},{GUARDIAN},1,\"Again\",0x1"),  # doesn't change who owns it
+            (4.1, hit(GUARDIAN, BOSS, "Zap", 10)),
+            (4.2, f"SPELL_SUMMON,{LOOP_A},{LOOP_B},1,\"B\",0x1"),
+            (4.3, f"SPELL_SUMMON,{LOOP_B},{LOOP_A},1,\"A\",0x1"),         # a cycle must not hang
+            (4.4, hit(LOOP_A, BOSS, "Not mine", 10)),
+            (5.0, f'SPELL_DAMAGE,{ME},{BOSS},1,"Arcane Blast",0x40,5000,5000,-1,64,0,0,0,nil,nil,nil,ST'),  # no advanced logging
+        ], before=[f"SPELL_SUMMON,{ME},{PET},321686,\"Mirror Image\",0x1"])
+        d = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]["damage"]
+        self.assertEqual(d["by_spell"], [
+            {"spell": "Melee", "pet": "Mirror Image", "amount": 425, "hits": 2, "crits": 1},
+            {"spell": "Zap", "pet": "Spark", "amount": 20, "hits": 2, "crits": 0},
+        ])
 
     def test_no_damage(self):
         self.write([(1.5, cast(5143, "Arcane Missiles"))])

@@ -574,7 +574,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 
     // DPS over time, with the cooldown windows shaded behind it
     if (dps) {
-      const peak = Math.max(...dps, 1), dy = (v) => dpsTop + dpsH - (dpsH * v) / peak;
+      const peak = Math.max(...dps.slice(0, Math.floor(end) + 1), 1), dy = (v) => dpsTop + dpsH - (dpsH * v) / peak;  // what the lane shows
       label("DPS (5s avg)", dpsTop + dpsH / 2);
       for (const [name, color] of WINDOWS.slice(0, 3)) for (const w of (p.windows || {})[name] || []) {
         if (w.start > end) continue;

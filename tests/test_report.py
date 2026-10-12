@@ -421,7 +421,8 @@ class Renders(unittest.TestCase):
         self.assertIn("<svg", dom)
         self.assertIn("Habit 1", dom)
         self.assertIn("Keep Salvo high.", dom)
-        for section in ("What went well", "Work on", "Top tips for next pull", "Damage by spell", "DPS (5s avg)", "61.0K damage, pets included", "61.0K damage over 1 pull"):
+        for section in ("What went well", "Work on", "Top tips for next pull", "Damage by spell", "DPS (5s avg)", "61.0K damage, pets included", "61.0K damage over 1 pull",
+                        "12.2K peak"):  # 52K at 4.2s + 9K at 7.1s over the 5s window (a 1s window peaks at 52.0K)
             self.assertIn(section, dom)
         self.assertNotIn(">Trend<", dom)  # no --history, no trend section
 
@@ -443,6 +444,7 @@ class Renders(unittest.TestCase):
         dom = self.render_dom(r, coaching("</script><img src=x onerror=alert(1)>"))
         self.assertIn('data-rendered="1"', dom)
         self.assertNotIn("<img", dom)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", dom)  # rendered, as text
 
 
 if __name__ == "__main__":
