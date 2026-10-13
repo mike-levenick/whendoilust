@@ -129,6 +129,10 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 .habit .num { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
   border-radius: 50%; background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 13px; margin-bottom: 6px; }
 .habit { border-top: 3px solid var(--accent); }
+.diff { border-top: 3px solid var(--s1); }
+.diff dl { margin: 8px 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.diff dt { color: var(--muted); font-size: 13px; }
+.diff dd { margin: 0; overflow-wrap: break-word; }
 .chip { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .chip:hover { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
@@ -146,6 +150,8 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
 .dmg .bar { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 3px; }
 .dmg .bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .stack { display: grid; gap: 16px; align-content: start; }
+.bench a { color: inherit; }
+.bench td.num .badge { font-size: 14px; color: var(--ink); }
 .trend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .trend > * { min-width: 0; }
 .trend .value { font-size: 22px; font-weight: 600; }
@@ -389,6 +395,17 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
       });
       box.append(section("Work on", "warning", habits));
     }
+    if ((coaching.differences || []).length) {
+      const g = el("div", { class: "habits" });
+      for (const h of coaching.differences) {
+        const dl = el("dl", {});
+        for (const [k, label] of [["you", "You"], ["top", "Top players"], ["takeaway", "Takeaway"]]) {
+          if (h[k]) dl.append(el("dt", {}, label), el("dd", {}, h[k]));
+        }
+        g.append(el("div", { class: "card diff" }, el("h3", {}, h.title || ""), dl, moments(h.moments)));
+      }
+      box.append(section("How the top players differ", null, g));
+    }
     if ((coaching.tips || []).length) {
       box.append(section("Top tips for next pull", null,
         el("div", { class: "card" }, el("ol", { class: "tips" }, ...coaching.tips.map((t) => el("li", {}, t))))));
@@ -477,6 +494,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
   }
 
   function jumpTo(number, t) {
+    playerIdx = 0;  // chips and deep links are about your own casts
     selectPull(number, t);
     try { history.replaceState(null, "", t == null ? `#pull-${number}` : `#pull-${number}@${t}`); } catch (e) { /* file:// in some browsers */ }
     $("pull").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -487,20 +505,69 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
     if (printing) wrap.append(el("h2", {}, `#${pull.number} ${pull.label}`));
     const note = coaching && coaching.pulls && coaching.pulls[String(pull.number)];
     if (note) wrap.append(el("p", { class: "pull-note" }, note));
-    if (pull.players.length > 1 && !printing) {
+    const bench = benchFor(pull);
+    if (bench) wrap.append(benchCard(pull, bench));
+    // The players you can open: everyone in your log, then the benchmark's top players (screen only).
+    const viewable = [...pull.players, ...(bench && !printing ? bench.players : [])];
+    if (!printing) playerIdx = Math.min(playerIdx, viewable.length - 1);
+    if (viewable.length > 1 && !printing) {
       const sw = el("div", { class: "tabs" });
-      pull.players.forEach((p, i) => sw.append(el("button", {
+      viewable.forEach((p, i) => sw.append(el("button", {
         type: "button", "aria-selected": String(i === playerIdx),
         onclick: () => { playerIdx = i; selectPull(pull.number, highlight); },
-      }, short(p.name))));
+      }, p.benchmark ? `Top #${i - pull.players.length + 1} ${short(p.name)}` : short(p.name),
+        p.benchmark && p.benchmark.region ? el("span", { class: "res" }, ` ${p.benchmark.region}`) : null)));
       wrap.append(sw);
     }
-    const players = printing ? pull.players : [pull.players[Math.min(playerIdx, pull.players.length - 1)]];
+    const players = printing ? pull.players : [viewable[Math.min(playerIdx, viewable.length - 1)]];
     for (const p of players) {
       if (printing && pull.players.length > 1) wrap.append(el("h3", {}, short(p.name)));
       wrap.append(pullTiles(p), timeline(pull, p, printing), pullDetails(pull, p));
     }
     return wrap;
+  }
+
+  // ---------- benchmark: top Arcane Sunfury parses on Warcraft Logs ----------
+  function benchFor(pull) {
+    const b = pull.benchmark && report.benchmarks && report.benchmarks[pull.benchmark];
+    return b && Array.isArray(b.players) && b.players.length ? b : null;
+  }
+  const firstUse = (p, spell) => { const cd = p.spec_checks && p.spec_checks.cooldowns.find((c) => c.spell === spell);
+    return cd && cd.uses.length ? cd.uses[0] : null; };
+  // [label, value(p), format, higher is better (+1), lower (-1) or neither (0)]
+  const BENCH = [
+    ["Priority match", (p) => p.spec_checks && p.spec_checks.priority.total ? 100 * p.spec_checks.priority.matched / p.spec_checks.priority.total : null, (v) => `${Math.round(v)}%`, 1],
+    ["DPS", (p) => p.damage ? p.damage.dps : null, big, 1],
+    ["Idle", (p) => p.time_alive ? 100 * p.idle.total / p.time_alive : null, (v) => `${Math.round(v)}%`, -1],
+    ["Casts per minute", (p) => p.casts_per_minute, (v) => v.toFixed(0), 1],
+    ["First Arcane Surge", (p) => firstUse(p, "Arcane Surge"), fmt, -1],
+    ["Clearcasting wasted outside Soul", (p) => p.spec_checks ? p.spec_checks.clearcasting.wasted.filter((w) => !w.in_soul).length : null, String, 0],
+  ];
+  const medianOf = (vs) => { const v = vs.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+    if (!v.length) return null; const m = Math.floor(v.length / 2); return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+  const WCL = "https://www.warcraftlogs.com/";
+  function benchCard(pull, bench) {
+    const me = pull.players[0], top = bench.players;
+    const head = el("tr", {}, el("th", {}, ""), el("th", {}, "You"), el("th", {}, "Top median"),
+      ...top.map((p, i) => el("th", {}, typeof p.benchmark.url === "string" && p.benchmark.url.startsWith(WCL)
+        ? el("a", { href: p.benchmark.url, target: "_blank", rel: "noopener noreferrer" }, `#${i + 1} ${short(p.name)}`)
+        : `#${i + 1} ${short(p.name)}`)));
+    const body = el("tbody", {});
+    for (const [label, get, f, better] of BENCH) {
+      const mine = get(me), med = medianOf(top.map(get));
+      const show = (v) => (v == null ? "-" : f(v));
+      let cell = show(mine);
+      if (mine != null && med != null && better && mine !== med) {
+        const st = (mine - med) * better > 0 ? "good" : "critical";
+        cell = el("span", { class: `badge st-${st}` }, el("i", { "aria-hidden": "true" }, st === "good" ? "▲" : "▼"), show(mine));
+      }
+      body.append(el("tr", {}, el("td", {}, label), el("td", { class: "num" }, cell), el("td", { class: "num" }, show(med)),
+        ...top.map((p) => el("td", { class: "num muted" }, show(get(p))))));
+    }
+    return el("div", { class: "card bench", style: "margin-bottom:12px" },
+      el("h3", {}, `You vs the top ${top.length} Arcane Sunfury on Warcraft Logs`),
+      el("p", { class: "muted", style: "font-size:13px" }, `${bench.label}. Top players by DPS, Sunfury with the 4-piece only, analyzed the same way as you. Open their timelines with the tabs below.`),
+      el("div", { class: "scroll-x" }, el("table", {}, el("thead", {}, head), body)));
   }
 
   function pullTiles(p) {
@@ -793,6 +860,7 @@ h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; backgrou
   function openHash() {
     const m = /^#pull-(\d+)(?:@(\d+(?:\.\d+)?))?$/.exec(location.hash);
     if (!m || !pulls.some((p) => p.number === +m[1])) return false;
+    playerIdx = 0;
     selectPull(+m[1], m[2] == null ? null : +m[2]);
     requestAnimationFrame(() => $("pull").scrollIntoView({ block: "start" }));
     return true;

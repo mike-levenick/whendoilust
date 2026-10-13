@@ -109,7 +109,9 @@ class SelfContained(unittest.TestCase):
     def test_template_loads_nothing_from_the_network(self):
         page = template()
         self.assertIn("default-src 'none'", page)  # Content-Security-Policy: the browser enforces it
-        self.assertEqual(set(re.findall(r'https?://[^\s"\'<>)]+', page)), {"http://www.w3.org/2000/svg"})
+        # The SVG namespace, and the prefix benchmark links must start with (links are navigation, not loads)
+        self.assertEqual(set(re.findall(r'https?://[^\s"\'<>)]+', page)),
+                         {"http://www.w3.org/2000/svg", "https://www.warcraftlogs.com/"})
         for pattern in (r"\bfetch\(", r"XMLHttpRequest", r"sendBeacon", r"WebSocket", r"EventSource", r"new Image",
                         r"\bimport\(", r"srcset", r"@font-face", r"@import", r"url\(", r"<(link|img|iframe|object|base|form)\b",
                         r"""(href|src|action|data|poster)\s*=\s*["']?(https?:)?//"""):
@@ -138,6 +140,19 @@ class CoachingCheck(unittest.TestCase):
         self.assertIn("habit 1: no pull #9 in this report", problems)
         self.assertIn("habit 1: nothing in pull #1 within 0.05s of t=None", problems)
         self.assertIn("pull note for #7, which isn't in this report", problems)
+
+    def test_differences_need_a_benchmark_and_grounded_moments(self):
+        c = coaching()
+        c["differences"] = [{"title": "x", "you": "y", "top": "z", "takeaway": "w", "moments": [{"pull": 1, "t": 30.0}]}]
+        r = real_report()
+        problems = report.check_coaching(r, c)
+        self.assertIn("differences written but the report has no benchmark (run wowlog.py --benchmark)", problems)
+        self.assertIn("difference 1: nothing in pull #1 within 0.05s of t=30.0", problems)
+        r["benchmarks"] = {"raid:9999:15": {"label": "x", "players": [r["pulls"][0]["players"][0]]}}
+        c["differences"][0]["moments"] = [{"pull": 1, "t": 4.0}]
+        self.assertEqual(report.check_coaching(r, c), [])
+        c["differences"] *= 4
+        self.assertIn("4 differences; the report shows the top 3 only", report.check_coaching(r, c))
 
     def test_strengths_and_tips_are_checked_like_habits(self):
         c = coaching()
@@ -381,6 +396,21 @@ class Cli(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(root, "docs", "coaching.md")))
 
 
+    def test_text_includes_the_benchmark(self):
+        r = real_report()
+        me = r["pulls"][0]["players"][0]
+        r["pulls"][0]["benchmark"] = "raid:9999:15"
+        r["benchmarks"] = {"raid:9999:15": {"label": "Heroic Training Dummy", "players": [dict(
+            me, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3", "region": "EU"})]}}
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "r.json")
+            json.dump(r, open(p, "w"))
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", ["report.py", p, "--text"]), contextlib.redirect_stdout(out):
+                report.main()
+        self.assertIn("vs the top 1 Arcane Sunfury on Warcraft Logs (Heroic Training Dummy)", out.getvalue())
+        self.assertIn("#1 Topmage-TarrenMill (EU)", out.getvalue())
+
     def test_reads_stdin_and_writes_the_output_file(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "r.html")
@@ -437,6 +467,36 @@ class Renders(unittest.TestCase):
         self.assertNotIn("<b>x</b>", dom)
         one = self.render_dom(r, None, trend[1:])
         self.assertIn("first report in the folder", one)
+
+    def test_benchmark_card_and_top_player_tabs(self):
+        r = real_report()
+        me = r["pulls"][0]["players"][0]
+        better = json.loads(json.dumps(me))
+        better["damage"]["dps"] *= 2                       # they out-damage you: your DPS cell is ▼ critical
+        better["idle"]["total"] = me["idle"]["total"] * 2  # they idle more: your idle cell is ▲ good
+        top = [dict(better, name="Topmage-TarrenMill", benchmark={"url": "https://www.warcraftlogs.com/reports/AB#fight=3",
+                                                               "region": "EU", "server": "Tarren Mill", "wcl_dps": 1}),
+               dict(me, name="Sneaky-Realm", benchmark={"url": "javascript:alert(1)", "region": "US"})]
+        r["pulls"][0]["benchmark"] = "raid:9999:15"
+        r["benchmarks"] = {"raid:9999:15": {"label": "Heroic Training Dummy", "players": top, "checked": 2}}
+        c = coaching()
+        c["differences"] = [{"title": "They cast Bolt more", "you": "4 Bolts", "top": "13 Bolts", "takeaway": "Bolt at 8 CP"}]
+        self.assertEqual(report.check_coaching(r, c), [])
+        dom = self.render_dom(r, c)
+        self.assertIn("How the top players differ", dom)
+        self.assertIn("13 Bolts", dom)
+        self.assertIn("You vs the top 2 Arcane Sunfury on Warcraft Logs", dom)
+        self.assertIn('href="https://www.warcraftlogs.com/reports/AB#fight=3"', dom)
+        self.assertNotIn("javascript:", dom)
+        self.assertIn("Top #1 Topmage", dom)
+        self.assertIn("Top #2 Sneaky", dom)
+        rows = {m.group(1): m.group(2) for m in re.finditer(r"<tr><td>([^<]+)</td><td class=\"num\">(.*?)</td>", dom)}
+        self.assertIn('st-critical', rows["DPS"])
+        self.assertIn("▼", rows["DPS"])
+        self.assertIn('st-good', rows["Idle"])
+        self.assertIn("▲", rows["Idle"])
+        r["pulls"][0]["benchmark"] = "missing"
+        self.assertNotIn("You vs the top", self.render_dom(r))
 
     def test_hostile_text_still_renders(self):
         r = real_report()

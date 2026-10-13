@@ -261,11 +261,11 @@ PHOENIX = 'Creature-0-1-1-1-223453-0000000008,"Arcane Phoenix",0x2111,0x80000000
 PAL = 'Player-1-00000003,"Paladin-Realm-US",0x512,0x80000000'
 
 
-def hit(src, dst, name, amount, absorbed=0, crit=False, event="SPELL_DAMAGE"):
+def hit(src, dst, name, amount, absorbed=0, crit=False, event="SPELL_DAMAGE", overkill=-1):
     """A damage line laid out like a real 12.x advanced log (42 fields)."""
     return (f'{event},{src},{dst},1,"{name}",0x40,Creature-0-1-1-1-1-0000000001,0000000000000000,'
             f'100,100,0,0,1470,0,0,0,1,0,0,0,0.00,0.00,1038,0.0,90,'
-            f'{amount},{amount},-1,64,0,0,{absorbed},{"1" if crit else "nil"},nil,nil,ST')
+            f'{amount},{amount},{overkill},64,0,0,{absorbed},{"1" if crit else "nil"},nil,nil,ST')
 
 
 GUARDIAN = 'Creature-0-1-1-1-99999-0000000007,"Spark",0x2111,0x80000000'
@@ -292,6 +292,7 @@ class Damage(LogTest):
         self.write([
             (2.0, hit(ME, BOSS, "Arcane Barrage", 1000, absorbed=200, crit=True)),
             (2.5, hit(ME, BOSS, "Arcane Missiles", 300, event="SPELL_PERIODIC_DAMAGE")),
+            (2.6, hit(ME, BOSS, "Arcane Missiles", 900, overkill=900)),   # all overkill: nothing done
             (3.2, f'SPELL_MISSED,{ME},{BOSS},1,"Arcane Barrage",0x40,ABSORB,nil,500,500,nil,ST'),
             (3.3, f'SPELL_MISSED,{ME},{BOSS},1,"Arcane Missiles",0x40,IMMUNE,nil,AOE'),
             (4.0, hit(ME, ME, "Refraction", 9999)),                       # damage to yourself
@@ -306,7 +307,7 @@ class Damage(LogTest):
         self.assertEqual(d["dps"], round(2120 / 60))
         self.assertEqual(d["by_spell"], [
             {"spell": "Arcane Barrage", "pet": None, "amount": 1700, "hits": 2, "crits": 1},
-            {"spell": "Arcane Missiles", "pet": None, "amount": 300, "hits": 1, "crits": 0},
+            {"spell": "Arcane Missiles", "pet": None, "amount": 300, "hits": 2, "crits": 0},
             {"spell": "Arcane Barrage", "pet": "Arcane Phoenix", "amount": 70, "hits": 1, "crits": 0},
             {"spell": "Frostbolt", "pet": "Mirror Image", "amount": 50, "hits": 1, "crits": 0},
         ])
@@ -338,6 +339,40 @@ class Damage(LogTest):
         d = json.loads(self.run_cli("--json"))["pulls"][0]["players"][0]["damage"]
         self.assertEqual((d["total"], d["dps"], d["by_spell"], sum(d["per_second"])), (0, 0, [], 0))
         self.assertNotIn("Damage:", self.run_cli())
+
+
+class Benchmark(LogTest):
+    def test_key_context_and_benchmark_output(self):
+        write_log(self.path, [(1.000, cc("SPELL_AURA_APPLIED")), (1.500, cast(5143, "Arcane Missiles"))])
+        lines = open(self.path).read().splitlines()
+        key = '10/10/2026 19:59:00.000-5  CHALLENGE_MODE_START,"Temple of Sethraliss",1877,250,12,[9,10,147]'
+        open(self.path, "w").write("\n".join([key] + lines) + "\n")
+        self.assertIsNone(json.loads(self.run_cli("--json"))["pulls"][0]["key"])  # a raid boss after an unfinished key
+        lines = [ln.replace(',15,20,1', ',8,5,1') for ln in lines]                  # now a Mythic+ boss
+        open(self.path, "w").write("\n".join([key] + lines) + "\n")
+        mine = json.loads(self.run_cli("--json"))
+        self.assertEqual(mine["pulls"][0]["key"], {"dungeon": "Temple of Sethraliss", "map_id": 1877, "level": 12})
+        self.assertEqual(mine["benchmarks"], {})
+        self.assertNotIn("benchmark", mine["pulls"][0])
+        top = dict(mine["pulls"][0]["players"][0], name="Topmage-TarrenMill",
+                   benchmark={"url": "https://www.warcraftlogs.com/reports/X#fight=1", "region": "EU", "server": "Tarren Mill",
+                              "wcl_dps": 1, "key_level": 12})
+        fake = mock.MagicMock()
+        fake.bench_key.return_value = "mplus:1877:12:9999"
+        fake.benchmarks.return_value = {"mplus:1877:12:9999": {"label": "Training Dummy, Temple of Sethraliss +12",
+                                                              "players": [top], "checked": 1}}
+        with mock.patch.dict(sys.modules, {"wcl": fake}):
+            report = json.loads(self.run_cli("--json", "--benchmark", "2"))
+            text = self.run_cli("--benchmark")
+        self.assertEqual(fake.benchmarks.call_args_list[0].args[1], 2)
+        self.assertEqual(fake.benchmarks.call_args_list[1].args[1], 3)  # the default
+        self.assertEqual(report["pulls"][0]["benchmark"], "mplus:1877:12:9999")
+        self.assertEqual(report["benchmarks"]["mplus:1877:12:9999"]["players"][0]["name"], "Topmage-TarrenMill")
+        self.assertIn("vs the top 1 Arcane Sunfury on Warcraft Logs (Training Dummy, Temple of Sethraliss +12)", text)
+        self.assertIn("#1 Topmage-TarrenMill (EU)", text)
+        fake.benchmarks.return_value = {"mplus:1877:12:9999": {"label": "x", "players": [], "checked": 4}}
+        with mock.patch.dict(sys.modules, {"wcl": fake}):
+            self.assertIsNone(json.loads(self.run_cli("--json", "--benchmark"))["pulls"][0]["benchmark"])
 
 
 class NewestLog(unittest.TestCase):

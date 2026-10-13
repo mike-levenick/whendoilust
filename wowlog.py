@@ -24,6 +24,7 @@ MINE_FLAG = 0x511  # affiliation mine + reaction friendly + controlled by player
 GCD = 1.5          # base GCD; haste shrinks it, so gaps above this are a conservative "idle" measure
 IDLE_THRESHOLD = 2.0
 DIFFICULTY = {14: "Normal", 15: "Heroic", 16: "Mythic", 17: "LFR", 8: "M+"}
+MYTHIC_PLUS = 8
 POWER_ARCANE_CHARGES = 16
 SALVO_MAX = 25
 CLEARCASTING_MAX = 3
@@ -38,7 +39,7 @@ SERIES = {"Arcane Salvo": "salvo", "Clearcasting": "clearcasting"}  # stack coun
 
 # Damage done: hits and fully absorbed misses. Fields are counted from the front: the 9 source/target fields, the
 # 3 spell fields (absent on SWING_*), then 19 advanced-log fields, then amount, base, overkill, school, resisted,
-# blocked, absorbed, critical. The tail after that differs (spells add ST/AOE, swings don't).
+# blocked, absorbed, critical. Damage done = amount - overkill + absorbed, matching Warcraft Logs. The tail after that differs (spells add ST/AOE, swings don't).
 # SWING_DAMAGE_LANDED repeats SWING_DAMAGE, so it isn't counted.
 ADVANCED_FIELDS = 19
 DAMAGE_EVENTS = {"SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE", "RANGE_DAMAGE", "SWING_DAMAGE"}
@@ -81,6 +82,7 @@ class Encounter:
         self.success = None
         self.events = []
         self.owners = {}  # pet/guardian GUID -> summoner GUID, log-wide (shared by every encounter)
+        self.key = None   # {"dungeon", "map_id", "level"} when the pull is a boss inside a Mythic+ key
 
     @property
     def label(self):
@@ -97,13 +99,22 @@ class Encounter:
 def split_encounters(path):
     encounters, cur = [], None
     owners = {}  # every summon in the log, so a pet summoned before the pull still counts
+    key = None
     for t, f in read_events(path):
         ev = f[0]
+        if ev == "CHALLENGE_MODE_START" and len(f) > 4:
+            try:
+                key = {"dungeon": f[1], "map_id": int(f[2]), "level": int(f[4])}
+            except ValueError:
+                key = None
+        elif ev == "CHALLENGE_MODE_END":
+            key = None
         if ev == "SPELL_SUMMON" and len(f) > 5:
             owners.setdefault(f[5], f[1])  # GUIDs are per spawn; the first summon is the real one
         if ev == "ENCOUNTER_START":
             cur = Encounter(t, f)
-            cur.owners = owners
+            # Only a Mythic+ boss belongs to the key (a raid after an abandoned key, with no END logged, doesn't).
+            cur.owners, cur.key = owners, key if cur.difficulty == MYTHIC_PLUS else None
             encounters.append(cur)
         elif ev == "ENCOUNTER_END" and cur:
             cur.end, cur.success = t, f[5] == "1"
@@ -148,7 +159,9 @@ def damage_done(f):
             at = base + ADVANCED_FIELDS
             if len(f) < at + 8:
                 return None
-            return int(f[at]) + int(f[at + 6]), f[at + 7] == "1", f[10] if has_spell else "Melee"
+            # Overkill (damage past the target's last hit point; -1 when none) isn't damage done, as on Warcraft Logs.
+            amount = int(f[at]) - max(0, int(f[at + 2]))
+            return amount + int(f[at + 6]), f[at + 7] == "1", f[10] if has_spell else "Melee"
         if ev in MISSED_EVENTS:
             at = base  # missType, then isOffHand, then the amount
             if f[at] == "ABSORB":
@@ -601,6 +614,45 @@ def print_report(label, p):
             print(f"    {f['count']}x {f['spell']}: {f['reason']}")
 
 
+BENCH_STATS = [  # (label, value from a player summary or None, format)
+    ("Priority match", lambda p: p["spec_checks"] and pct_or_none(p["spec_checks"]["priority"]["matched"],
+                                                                   p["spec_checks"]["priority"]["total"]), "{:.0f}%"),
+    ("DPS", lambda p: p["damage"]["dps"], None),
+    ("Idle", lambda p: pct_or_none(p["idle"]["total"], p["time_alive"]), "{:.0f}%"),
+    ("Casts per minute", lambda p: p["casts_per_minute"], "{:.0f}"),
+    ("First Arcane Surge", lambda p: p["spec_checks"] and next((c["uses"][0] for c in p["spec_checks"]["cooldowns"]
+                                                               if c["spell"] == "Arcane Surge" and c["uses"]), None), "time"),
+    ("Clearcasting wasted outside Soul", lambda p: p["spec_checks"] and
+        sum(1 for w in p["spec_checks"]["clearcasting"]["wasted"] if not w["in_soul"]), "{:.0f}"),
+]
+
+
+def pct_or_none(a, b):
+    return 100 * a / b if b else None
+
+
+def median(values):
+    v = sorted(x for x in values if x is not None)
+    if not v:
+        return None
+    mid = len(v) // 2
+    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
+
+
+def print_benchmark(me, bench):
+    top = bench["players"]
+    print(f"  vs the top {len(top)} Arcane Sunfury on Warcraft Logs ({bench['label']}):")
+    for label, get, form in BENCH_STATS:
+        mine, theirs = get(me), median(get(p) for p in top)
+        fmt = (lambda v: "-" if v is None else short_number(round(v))) if form is None else \
+              (lambda v: "-" if v is None else fmt_t(v)) if form == "time" else \
+              (lambda v: "-" if v is None else form.format(v))
+        print(f"    {label:34} you {fmt(mine):>7}   top median {fmt(theirs):>7}")
+    for i, p in enumerate(top, 1):
+        b = p["benchmark"]
+        print(f"    #{i} {p['name']} ({b['region']}), {short_number(p['damage']['dps'] or 0)} DPS on this boss: {b['url']}")
+
+
 def short_number(n):
     for div, unit in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
         if abs(n) >= div:
@@ -646,7 +698,7 @@ def pull_info(i, enc):
             "difficulty": DIFFICULTY.get(enc.difficulty, str(enc.difficulty)),
             "result": {True: "kill", False: "wipe", None: "incomplete"}[enc.success],
             "start": datetime.fromtimestamp(enc.start).isoformat(timespec="seconds"),
-            "duration": rnd(enc.duration), "label": enc.label}
+            "duration": rnd(enc.duration), "label": enc.label, "key": enc.key}
 
 
 def log_started(path):
@@ -678,6 +730,9 @@ def main():
     ap.add_argument("--pull", type=int, action="append", help="only report pull number N (see --list); repeatable")
     ap.add_argument("--compare", action="append", default=[], help="also report this player, e.g. a same-spec raider")
     ap.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
+    ap.add_argument("--benchmark", type=int, nargs="?", const=3, default=0, metavar="N",
+                    help="compare with the top N Arcane Sunfury parses on Warcraft Logs for the same boss "
+                         "(default 3; needs WCL_CLIENT_ID/WCL_CLIENT_SECRET, see wcl.py)")
     ap.add_argument("--log-dir", help="folder to search for the newest log (default: the standard retail Logs folder)")
     args = ap.parse_args()
     path = args.logfile or newest_log(args.log_dir)
@@ -698,9 +753,16 @@ def main():
     builds = {guid: dict(zip(map(id, encounters), detect_builds(encounters, guid))) for guid, _ in players}
     pulls = [dict(pull_info(i, e), players=[summarize(e, guid, name, *builds[guid][id(e)]) for guid, name in players])
              for i, e in numbered]
+    benchmarks = {}
+    if args.benchmark:
+        import wcl  # only needed (and only touches the network) with --benchmark
+        benchmarks = wcl.benchmarks([e for _, e in numbered], args.benchmark)
+        for pull, (_, e) in zip(pulls, numbered):
+            k = wcl.bench_key(e)
+            pull["benchmark"] = k if benchmarks.get(k, {}).get("players") else None
     if args.json:
         json.dump({"schema": 1, "log": os.path.basename(path), "log_started": log_started(path).isoformat(),
-                   "pulls": pulls}, sys.stdout, indent=1)
+                   "pulls": pulls, "benchmarks": benchmarks}, sys.stdout, indent=1)
         print()
         return
     print(f"Log: {os.path.basename(path)}")
@@ -709,6 +771,8 @@ def main():
     for pull in pulls:
         for p in pull["players"]:
             print_report(pull["label"], p)
+        if pull.get("benchmark"):
+            print_benchmark(pull["players"][0], benchmarks[pull["benchmark"]])
 
 
 if __name__ == "__main__":

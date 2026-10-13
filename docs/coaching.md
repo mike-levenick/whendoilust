@@ -26,6 +26,15 @@ report (see `check_coaching`).
       "moments": [{"pull": 4, "t": 102.2, "note": "optional one-line tooltip", "player": "optional name"}]
     }
   ],
+  "differences": [
+    {
+      "title": "What the top players do differently, e.g. 'They cast Prismatic Bolt three times as often on Avatar'",
+      "you": "What you did, with the numbers.",
+      "top": "What the top players did on the same boss, with their numbers.",
+      "takeaway": "What to change, or why it may not apply to you.",
+      "moments": [{"pull": 4, "t": 109.234, "note": "optional"}]
+    }
+  ],
   "tips": ["One-line reminder for the next pull.", "..."],
   "pulls": {"4": "1-2 sentences for pull #4."},
   "caveats": ["Where a flagged 'mistake' may be correct, or the data is thin."]
@@ -40,8 +49,12 @@ report (see `check_coaching`).
   shows what the habit says, so pick moments that genuinely do.
   `player` (a name prefix) is only for moments about a comparison player; the default is the main player.
   Moments must be in pulls whose `build.supported` is true. Each renders as a chip that jumps there.
-- The report shows the coaching in three sections: **What went well** (`strengths`), **Work on** (`habits`)
-  and **Top tips for next pull** (`tips`).
+- The report shows the coaching in sections: **What went well** (`strengths`), **Work on** (`habits`),
+  **How the top players differ** (`differences`) and **Top tips for next pull** (`tips`).
+- `differences`: **up to 3**, only when the report has `benchmarks` (`wowlog.py --benchmark`); `--strict`
+  rejects them otherwise. Compare like with like (the same boss), quote both sides' numbers from the JSON, and
+  rank by how much the gap is worth. Moments cite the user's own pulls. Where a gap may come from gear or
+  haste rather than play (casts per minute, DPS), say so.
 - `strengths`: **up to 3** things the player did well, best first, each with a `detail` grounded in the JSON
   and optional `moments` (checked exactly like habit moments). Real strengths only; skip the section rather
   than invent praise.
@@ -56,11 +69,14 @@ report (see `check_coaching`).
    estimated. If a number isn't in the data, don't state it.
 2. **Spec facts come from current-season sources**, not memory: the SimC APL on the `midnight` branch and
    the Method.gg Arcane guide. Mechanics change every patch.
-3. **Be honest about uncertainty.** The analyzer assumes a single target, so on add-heavy fights (most
+3. **Benchmarks are evidence too.** When the report has `benchmarks`, the top players' numbers on the same boss
+   are real data: cite them ("the top three had their first Surge by 1:08"). Top players don't match the SimC
+   priority 100% either, so a habit they share isn't a clear mistake.
+4. **Be honest about uncertainty.** The analyzer assumes a single target, so on add-heavy fights (most
    M+ bosses, raid add phases) "Barrage, priority says filler" can be correct AoE play. Arcane Charges
    are approximate. When a habit rests on that, say so in `caveats` rather than overstating it.
-4. **Rotation, not deaths.** Deaths are obvious to the player; don't coach them unless asked.
-5. **Plain language, second person, no jargon the player didn't use.** "You", not "the player".
-6. Only coach builds the report supports (`build.supported`, per pull). If no pull is supported, write a
+5. **Rotation, not deaths.** Deaths are obvious to the player; don't coach them unless asked.
+6. **Plain language, second person, no jargon the player didn't use.** "You", not "the player".
+7. Only coach builds the report supports (`build.supported`, per pull). If no pull is supported, write a
    headline saying spec coaching isn't available and leave `habits` empty; if some aren't, coach the rest
    and name the skipped pulls in `caveats`.

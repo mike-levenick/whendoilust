@@ -67,9 +67,15 @@ Name the run `YYYY-MM-DD-<slug>`: the date of the log (from its file name, `WoWC
 slug of lowercase letters, digits and hyphens only (e.g. `sethraliss-key`, `sentinels-pull-13`). If a file
 with that name already exists, add `-2`, `-3`, ... so earlier reports are never overwritten. Then:
 
+**Benchmark.** If `$REPO/.env` exists or `WCL_CLIENT_ID` is set, add `--benchmark` to the `wowlog.py` run: it
+compares each boss with the top 3 Arcane Sunfury 4-piece parses on Warcraft Logs (same boss and difficulty in raid;
+same dungeon boss at the same key level in Mythic+), analyzed exactly like the user's own pulls. It needs the
+network and prints its progress or any problem (no credentials, rate limit) on stderr; a failure only leaves the
+benchmark out, so carry on and mention it. Without credentials, skip it.
+
 ```bash
 BASE="$OUT/<name>"
-"$PY" "$REPO/wowlog.py" <log/pull/player args> --json > "$BASE.json"
+"$PY" "$REPO/wowlog.py" <log/pull/player args> [--benchmark] --json > "$BASE.json"
 "$PY" "$REPO/report.py" "$BASE.json" --text > "$BASE.txt"     # same data, readable; made from the JSON
 ```
 
@@ -98,6 +104,13 @@ Read `$REPO/docs/coaching.md` and follow its format and writing rules exactly. T
 - **Up to 3 tips** ("Top tips for next pull"): one-line cues the player can remember mid-fight, usually the
   habits boiled down.
 - One or two sentences per pull in `pulls`, skipping pulls with nothing to say.
+- With a benchmark, write **up to 3 `differences`** ("How the top players differ"): compare the user with the
+  top players (`benchmarks[pull.benchmark].players`) boss by boss: cast counts per spell, damage by spell share,
+  first Arcane Surge, Touch uses, casts per minute, idle, priority match and which mismatch reasons each side
+  has. Lead with the gaps worth the most, give both sides' numbers, and say what to change. Where top players
+  also "break" the SimC priority, say so rather than calling it a mistake; where a gap may be gear or haste
+  (casts per minute, DPS), say that too. Moments can only cite the user's own pulls. Without a benchmark,
+  leave `differences` out.
 - `caveats` wherever a flagged cast may be correct: the analyzer assumes one target, so "Barrage, priority
   says filler" on add-heavy fights (most M+ bosses) can be right; Arcane Charges are approximate.
 - Rotation only, not deaths. Second person. Spec facts from the SimC `midnight` APL and Method.gg, never
