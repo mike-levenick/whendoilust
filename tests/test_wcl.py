@@ -107,7 +107,7 @@ class FakeClient:
         if "expansions" in q:
             return {"worldData": {"expansions": [{"zones": [
                 {"id": 56, "name": "Mythic+ Season 2 (PTR)", "encounters": [{"id": 111877, "name": "Temple of Sethraliss"}]},
-                {"id": 55, "name": "Mythic+ Season 2", "encounters": [{"id": 61877, "name": "Temple of Sethraliss"}]}]}]}}
+                {"id": 55, "name": "Mythic+ Season 2", "brackets": {"min": 2, "bucket": 1}, "encounters": [{"id": 61877, "name": "Temple of Sethraliss"}]}]}]}}
         return {"worldData": {"encounter": {"characterRankings": {"rankings": self.ranks, "hasMorePages": self.has_more}}}}
 
     def report_meta(self, code):
@@ -155,7 +155,7 @@ class TopPlayers(unittest.TestCase):
         out = wcl.top_players(c, enc, 1)
         self.assertEqual(len(out["players"]), 1)
         self.assertIn("encounter(id: 61877)", c.calls[1])
-        self.assertIn("bracket: 12", c.calls[1])
+        self.assertIn("bracket: 11", c.calls[1])  # WCL's bracket 1 is +2, so +12 is bracket 11
         self.assertEqual(out["label"], "Adderis and Aspix, Temple of Sethraliss +12")
         self.assertEqual(wcl.bench_key(enc), "mplus:1877:12:2124")
 

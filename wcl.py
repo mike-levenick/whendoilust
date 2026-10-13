@@ -281,16 +281,23 @@ def bench_key(enc):
 
 
 def dungeon_encounter(client, name):
-    """WCL's ID for a Mythic+ dungeon, from the newest live Mythic+ zone that has it (not PTR or beta)."""
-    data = client.query("{ worldData { expansions { zones { id name encounters { id name } } } } }",
+    """WCL's ID for a Mythic+ dungeon, from the newest live Mythic+ zone that has it (not PTR or beta), and that
+    zone's key-level brackets ({min, bucket}: bracket 1 is +min)."""
+    data = client.query("{ worldData { expansions { zones { id name brackets { min bucket } encounters { id name } } } } }",
                         ttl=7 * 24 * 3600)
     zones = [z for x in data["worldData"]["expansions"] for z in x["zones"]
              if "Mythic+" in z["name"] and not any(w in z["name"] for w in ("PTR", "Beta"))]
     for z in sorted(zones, key=lambda z: -z["id"]):
         for e in z["encounters"]:
             if e["name"] == name:
-                return e["id"]
-    return None
+                return e["id"], z.get("brackets") or {}
+    return None, {}
+
+
+def key_bracket(level, brackets):
+    """The ranking bracket for a key level: WCL counts brackets from the zone's lowest key, so +13 is bracket 12."""
+    low, size = int(brackets.get("min") or 2), int(brackets.get("bucket") or 1)
+    return (int(level) - low) // size + 1
 
 
 def rankings(client, encounter_id, difficulty, bracket=None, page=1):
@@ -324,7 +331,8 @@ def top_players(client, enc, n, log=None):
     """Summaries (as wowlog.summarize makes them) of the top n Arcane Sunfury 4-piece parses for this pull's boss."""
     log = log or (lambda msg: None)
     if enc.key:
-        ranked_id, difficulty, bracket = dungeon_encounter(client, enc.key["dungeon"]), 10, enc.key["level"]
+        ranked_id, brackets = dungeon_encounter(client, enc.key["dungeon"])
+        difficulty, bracket = 10, key_bracket(enc.key["level"], brackets)
         label = f"{enc.name}, {enc.key['dungeon']} +{enc.key['level']}"
     else:
         ranked_id, difficulty, bracket = int(enc.id), WCL_DIFFICULTY.get(enc.difficulty), None
